@@ -12,7 +12,7 @@ import numpy as np
 import math
 
 parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-parser.add_argument('--data_dir', type=str, default='/nfs/turbo/coe-hunseok/mingyuy/KITTI_odometry', help='path to the dataset')
+parser.add_argument('--data_dir', type=str, default='./data', help='path to the dataset')
 parser.add_argument('--gpu_ids', type=str, default='0', help='gpu ids: e.g. 0  0,1,2, 0,2. use -1 for CPU')
 parser.add_argument('--save_dir', type=str, default='./results', help='path to save the result')
 
@@ -32,7 +32,7 @@ parser.add_argument('--rnn_dropout_out', type=float, default=0.2, help='dropout 
 parser.add_argument('--rnn_dropout_between', type=float, default=0.2, help='dropout within LSTM')
 
 parser.add_argument('--weight_decay', type=float, default=5e-6, help='weight decay for the optimizer')
-parser.add_argument('--batch_size', type=int, default=16, help='batch size')
+parser.add_argument('--batch_size', type=int, default=4, help='batch size')
 parser.add_argument('--seq_len', type=int, default=11, help='sequence length for LSTM')
 parser.add_argument('--workers', type=int, default=4, help='number of workers')
 parser.add_argument('--epochs_warmup', type=int, default=40, help='number of epochs for warmup')
@@ -49,7 +49,7 @@ parser.add_argument('--experiment_name', type=str, default='experiment', help='e
 parser.add_argument('--optimizer', type=str, default='Adam', help='type of optimizer [Adam, SGD]')
 
 parser.add_argument('--pretrain_flownet',type=str, default='./pretrain_models/flownets_bn_EPE2.459.pth.tar', help='wehther to use the pre-trained flownet')
-parser.add_argument('--pretrain', type=str, default=None, help='path to the pretrained model')
+parser.add_argument('--pretrain_model', type=str, default=None, help='path to the pretrained model')
 parser.add_argument('--hflip', default=False, action='store_true', help='whether to use horizonal flipping as augmentation')
 parser.add_argument('--color', default=False, action='store_true', help='whether to use color augmentations')
 
@@ -189,16 +189,16 @@ def main():
     model = DeepVIO(args)
 
     # Continual training or not
-    if args.pretrain is not None:
-        model.load_state_dict(torch.load(args.pretrain))
-        print('load model %s'%args.pretrain)
-        logger.info('load model %s'%args.pretrain)
+    if args.pretrain_model is not None:
+        model.load_state_dict(torch.load(args.pretrain_model))
+        print('load model %s'%args.pretrain_model)
+        logger.info('load model %s'%args.pretrain_model)
     else:
         print('Training from scratch')
         logger.info('Training from scratch')
     
     # Use the pre-trained flownet or not
-    if args.pretrain_flownet and args.pretrain is None:
+    if args.pretrain_flownet and args.pretrain_model is None:
         pretrained_w = torch.load(args.pretrain_flownet, map_location='cpu')
         model_dict = model.Feature_net.state_dict()
         update_dict = {k: v for k, v in pretrained_w['state_dict'].items() if k in model_dict}
@@ -209,8 +209,8 @@ def main():
     model.cuda(gpu_ids[0])
     model = torch.nn.DataParallel(model, device_ids = gpu_ids)
 
-    pretrain = args.pretrain 
-    init_epoch = int(pretrain[-7:-4])+1 if args.pretrain is not None else 0    
+    pretrain = args.pretrain_model 
+    init_epoch = int(pretrain[-7:-4])+1 if args.pretrain_model is not None else 0    
     
     # Initialize the optimizer
     if args.optimizer == 'SGD':
@@ -221,7 +221,7 @@ def main():
     
     best = 10000
 
-    for ep in range(init_epoch, args.epochs_warmup+args.epochs_joint+args.epochs_fine):
+    for ep in range(init_epoch, args.epochs_warmup + args.epochs_joint + args.epochs_fine):
         
         lr, selection, temp = update_status(ep, args, model)
         optimizer.param_groups[0]['lr'] = lr

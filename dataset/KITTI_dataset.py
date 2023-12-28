@@ -63,7 +63,7 @@ class KITTI(Dataset):
         imgs = [np.asarray(Image.open(img)) for img in sample['imgs']]
         
         if self.transform is not None:
-            imgs, imus, gts = self.transform(imgs, np.copy(sample['imus']), np.copy(sample['gts']))
+            imgs, imus, gts = self.transform(np.asarray(imgs), np.copy(sample['imus']), np.copy(sample['gts']))
         else:
             imus = np.copy(sample['imus'])
             gts = np.copy(sample['gts']).astype(np.float32)

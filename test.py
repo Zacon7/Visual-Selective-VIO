@@ -12,7 +12,7 @@ import numpy as np
 import math
 
 parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-parser.add_argument('--data_dir', type=str, default='/nfs/turbo/coe-hunseok/mingyuy/KITTI_odometry', help='path to the dataset')
+parser.add_argument('--data_dir', type=str, default='./data', help='path to the dataset')
 parser.add_argument('--gpu_ids', type=str, default='0', help='gpu ids: e.g. 0  0,1,2, 0,2. use -1 for CPU')
 parser.add_argument('--save_dir', type=str, default='./results', help='path to save the result')
 parser.add_argument('--seq_len', type=int, default=11, help='sequence length for LSTM')
@@ -34,7 +34,7 @@ parser.add_argument('--rnn_dropout_between', type=float, default=0.2, help='drop
 
 parser.add_argument('--workers', type=int, default=4, help='number of workers')
 parser.add_argument('--experiment_name', type=str, default='test', help='experiment name')
-parser.add_argument('--model', type=str, default='./pretrain_models/vf_512_if_256_3e-05.model', help='path to the pretrained model')
+parser.add_argument('--pretrain_model', type=str, default='./pretrain_models/vf_512_if_256_3e-05.model', help='path to the pretrained model')
 
 args = parser.parse_args()
 
@@ -68,8 +68,8 @@ def main():
     # Model initialization
     model = DeepVIO(args)
 
-    model.load_state_dict(torch.load(args.model))
-    print('load model %s'%args.model)
+    model.load_state_dict(torch.load(args.pretrain_model))
+    print('load model %s'%args.pretrain_model)
         
     # Feed model to GPU
     model.cuda(gpu_ids[0])

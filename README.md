@@ -30,7 +30,7 @@ We provide two pretrained checkpoints `vf_512_if_256_3e-05.model` and `vf_512_if
 
 Example command:
 
-      python test.py --data_dir './data' --model './pretrain_models/vf_512_if_256_5e-05.model' --gpu_ids '0' --experiment_name 'pretrained'
+      python test.py --data_dir './data' --pretrain_model './pretrain_models/vf_512_if_256_5e-05.model' --gpu_ids '0' --experiment_name 'pretrained'
 
 The figures and error records will be generated under `./results/pretrained/files` The estimated path (left), speed heatmap (middle) and decision heatmap (right) for path 07 is shown below: 
 

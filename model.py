@@ -47,7 +47,7 @@ class Inertial_encoder(nn.Module):
         batch_size = x.shape[0]
         seq_len = x.shape[1]
         x = x.view(batch_size * seq_len, x.size(2), x.size(3))    # x: (N x seq_len, 11, 6)
-        x = self.encoder_conv(x.permute(0, 2, 1))                 # x: (N x seq_len, 64, 11)
+        x = self.encoder_conv(x.permute(0, 2, 1))                 # x: (N x seq_len, , 11)
         out = self.proj(x.view(x.shape[0], -1))                   # out: (N x seq_len, 256)
         return out.view(batch_size, seq_len, 256)
 
