@@ -17,12 +17,12 @@ from scipy.ndimage import convolve1d
 IMU_FREQ = 10
 
 class KITTI(Dataset):
-    def __init__(self, root,
+    def __init__(self, data_root,
                  sequence_length=11,
                  train_seqs=['00', '01', '02', '04', '06', '08', '09'],
                  transform=None):
         
-        self.root = Path(root)
+        self.data_root = Path(data_root)
         self.sequence_length = sequence_length
         self.transform = transform
         self.train_seqs = train_seqs
@@ -31,18 +31,23 @@ class KITTI(Dataset):
     def make_dataset(self):
         sequence_set = []
         for folder in self.train_seqs:
-            poses, poses_rel = read_pose_from_text(self.root/'poses/{}.txt'.format(folder))
-            imus = sio.loadmat(self.root/'imus/{}.mat'.format(folder))['imu_data_interp']
-            fpaths = sorted((self.root/'sequences/{}/image_2'.format(folder)).files("*.png"))      
+            # poses: (img_nums, 4, 4),   poses_rel: (img_nums-1, 6)
+            poses, poses_rel = read_pose_from_text(self.data_root/'poses/{}.txt'.format(folder))
+            # imus: ((img_nums-1)*IMU_FREQ + 1, 6),    fpaths: len(img_nums)
+            imus = sio.loadmat(self.data_root/'imus/{}.mat'.format(folder))['imu_data_interp']
+            fpaths = sorted((self.data_root/'sequences/{}/image_2'.format(folder)).files("*.png")) 
+
             for i in range(len(fpaths)-self.sequence_length):
-                img_samples = fpaths[i:i+self.sequence_length]
-                imu_samples = imus[i*IMU_FREQ:(i+self.sequence_length-1)*IMU_FREQ+1]
+                img_samples = fpaths[i:i+self.sequence_length]                          # img_samples: len(11)
+                imu_samples = imus[i*IMU_FREQ:(i+self.sequence_length-1)*IMU_FREQ+1]    # img_samples: (101, 6)
                 pose_samples = poses[i:i+self.sequence_length]
-                pose_rel_samples = poses_rel[i:i+self.sequence_length-1]
+                pose_rel_samples = poses_rel[i:i+self.sequence_length-1]                # pose_rel_samples: (10, 6)
                 segment_rot = rotationError(pose_samples[0], pose_samples[-1])
+                         # imgs: len(11),      imus: (101, 6),     gts: (10, 6),            rot: a real number
                 sample = {'imgs':img_samples, 'imus':imu_samples, 'gts': pose_rel_samples, 'rot': segment_rot}
                 sequence_set.append(sample)
-        self.samples = sequence_set
+
+        self.samples = sequence_set     # samples: len(17260) = len(4541-11) + len(1101-11) + ... + len(1591-11)
         
         # Generate weights based on the rotation of the training segments
         # Weights are calculated based on the histogram of rotations according to the method in https://github.com/YyzHarry/imbalanced-regression
@@ -56,9 +61,17 @@ class KITTI(Dataset):
         lds_kernel_window = get_lds_kernel_window(kernel='gaussian', ks=7, sigma=5)
         eff_label_dist = convolve1d(np.array(emp_label_dist), weights=lds_kernel_window, mode='constant')
 
-        self.weights = [np.float32(1/eff_label_dist[bin_idx-1]) for bin_idx in indexes]
+        self.weights = [np.float32(1/eff_label_dist[bin_idx-1]) for bin_idx in indexes]     # weights: len(17260)
 
     def __getitem__(self, index):
+        '''
+        return:
+            imgs: (11, 3, H, W),
+            imus: (101, 6),
+            gts:  (10, 6),
+            rot:  a real number,
+            weights: len(17260)
+        '''
         sample = self.samples[index]
         imgs = [np.asarray(Image.open(img)) for img in sample['imgs']]
         

@@ -23,9 +23,9 @@ def conv(batchNorm, in_planes, out_planes, kernel_size=3, stride=1, dropout=0):
         )
 
 # The inertial encoder for raw imu data
-class Inertial_encoder(nn.Module):
+class InertialEncoder(nn.Module):
     def __init__(self, opt):
-        super(Inertial_encoder, self).__init__()
+        super(InertialEncoder, self).__init__()
 
         self.encoder_conv = nn.Sequential(
             nn.Conv1d(6, 64, kernel_size=3, padding=1),
@@ -39,22 +39,27 @@ class Inertial_encoder(nn.Module):
             nn.Conv1d(128, 256, kernel_size=3, padding=1),
             nn.BatchNorm1d(256),
             nn.LeakyReLU(0.1, inplace=True),
-            nn.Dropout(opt.imu_dropout))
-        self.proj = nn.Linear(256 * 1 * 11, opt.i_f_len)
+            nn.Dropout(opt.imu_dropout)
+        )
+        self.proj = nn.Linear(256 * 11, opt.i_f_len)
 
-    def forward(self, x):
-        # x: (N, seq_len, 11, 6)
-        batch_size = x.shape[0]
-        seq_len = x.shape[1]
-        x = x.view(batch_size * seq_len, x.size(2), x.size(3))    # x: (N x seq_len, 11, 6)
-        x = self.encoder_conv(x.permute(0, 2, 1))                 # x: (N x seq_len, , 11)
-        out = self.proj(x.view(x.shape[0], -1))                   # out: (N x seq_len, 256)
-        return out.view(batch_size, seq_len, 256)
+    def forward(self, fi):
+        '''
+        input:
+            fi: (batch, seq_len=10, 11, 6)
+        return:
+            out:(batch, seq_len=10, i_f_len=256)
+        '''
+        batch_size = fi.shape[0]
+        seq_len = fi.shape[1]
+        fi = fi.view(batch_size * seq_len, fi.size(2), fi.size(3))  # fi:  (batch *seq_len=10, 11, 6)
+        fi = self.encoder_conv(fi.permute(0, 2, 1))                 # fi:  (batch *seq_len=10, 256, 11)
+        out = self.proj(fi.view(fi.shape[0], -1))                   # out: (batch *seq_len=10, 256)
+        return out.view(batch_size, seq_len, 256)                   # out: (batch, seq_len=10, 256)
 
 class Encoder(nn.Module):
     def __init__(self, opt):
         super(Encoder, self).__init__()
-        # CNN
         self.opt = opt
         self.conv1 = conv(True, 6, 64, kernel_size=7, stride=2, dropout=0.2)
         self.conv2 = conv(True, 64, 128, kernel_size=5, stride=2, dropout=0.2)
@@ -65,28 +70,37 @@ class Encoder(nn.Module):
         self.conv5 = conv(True, 512, 512, kernel_size=3, stride=2, dropout=0.2)
         self.conv5_1 = conv(True, 512, 512, kernel_size=3, stride=1, dropout=0.2)
         self.conv6 = conv(True, 512, 1024, kernel_size=3, stride=2, dropout=0.5)
-        # Comput the shape based on diff image size
+
+        # Compute the shape based on diff image size
         __tmp = Variable(torch.zeros(1, 6, opt.img_w, opt.img_h))
         __tmp = self.encode_image(__tmp)
 
         self.visual_head = nn.Linear(int(np.prod(__tmp.size())), opt.v_f_len)
-        self.inertial_encoder = Inertial_encoder(opt)
+        self.inertial_encoder = InertialEncoder(opt)
 
     def forward(self, img, imu):
-        v = torch.cat((img[:, :-1], img[:, 1:]), dim=2)
-        batch_size = v.size(0)
-        seq_len = v.size(1)
+        ''' 
+        input:
+            img: (batch, seq_len=11, 3, H, W)
+            imu: (batch, 101, 6)
+        return:
+            fv: (batch, seq_len=10, v_f_len=512)
+            fi: (batch, seq_len=10, i_f_len=256)
+        '''
+        fv = torch.cat((img[:, :-1], img[:, 1:]), dim=2) # fv: (batch, seq_len=10, 6, H, W)
+        batch_size = fv.size(0)
+        seq_len = fv.size(1)
 
-        # image CNN
-        v = v.view(batch_size * seq_len, v.size(2), v.size(3), v.size(4))
-        v = self.encode_image(v)
-        v = v.view(batch_size, seq_len, -1)  # (batch, seq_len, fv)
-        v = self.visual_head(v)  # (batch, seq_len, 256)
+        # Image Encoder
+        fv = fv.view(batch_size * seq_len, fv.size(2), fv.size(3), fv.size(4))
+        fv = self.encode_image(fv)                # fv: (batch *seq_len=10, 1024, H, W)
+        fv = fv.view(batch_size, seq_len, -1)     # fv: (batch, seq_len=10, 1024*H*W)
+        fv = self.visual_head(fv)                 # fv: (batch, seq_len=10, v_f_len=512)
         
-        # IMU CNN
-        imu = torch.cat([imu[:, i * 10:i * 10 + 11, :].unsqueeze(1) for i in range(seq_len)], dim=1)
-        imu = self.inertial_encoder(imu)
-        return v, imu
+        # IMU Encoder
+        fi = torch.cat([imu[:, i * 10:i * 10 + 11, :].unsqueeze(1) for i in range(seq_len)], dim=1) # fi: (batch, seq_len=10, 11, 6)
+        fi = self.inertial_encoder(fi)  
+        return fv, fi
 
     def encode_image(self, x):
         out_conv2 = self.conv2(self.conv1(x))
@@ -98,17 +112,19 @@ class Encoder(nn.Module):
 
 
 # The fusion module
-class Fusion_module(nn.Module):
+class FusionModule(nn.Module):
     def __init__(self, opt):
-        super(Fusion_module, self).__init__()
+        super(FusionModule, self).__init__()
         self.fuse_method = opt.fuse_method
         self.f_len = opt.i_f_len + opt.v_f_len
         if self.fuse_method == 'soft':
             self.net = nn.Sequential(
-                nn.Linear(self.f_len, self.f_len))
+                nn.Linear(self.f_len, self.f_len)
+            )
         elif self.fuse_method == 'hard':
             self.net = nn.Sequential(
-                nn.Linear(self.f_len, 2 * self.f_len))
+                nn.Linear(self.f_len, 2 * self.f_len)
+            )
 
     def forward(self, v, i):
         if self.fuse_method == 'cat':
@@ -136,7 +152,8 @@ class PolicyNet(nn.Module):
             nn.Linear(256, 32),
             nn.LeakyReLU(0.1, inplace=True),
             nn.BatchNorm1d(32),
-            nn.Linear(32, 2))
+            nn.Linear(32, 2)
+        )
 
     def forward(self, x, temp):
         logits = self.net(x)
@@ -144,9 +161,9 @@ class PolicyNet(nn.Module):
         return logits, hard_mask
 
 # The pose estimation network
-class Pose_RNN(nn.Module):
+class PoseRNN(nn.Module):
     def __init__(self, opt):
-        super(Pose_RNN, self).__init__()
+        super(PoseRNN, self).__init__()
 
         # The main RNN network
         f_len = opt.v_f_len + opt.i_f_len
@@ -155,16 +172,18 @@ class Pose_RNN(nn.Module):
             hidden_size=opt.rnn_hidden_size,
             num_layers=2,
             dropout=opt.rnn_dropout_between,
-            batch_first=True)
+            batch_first=True
+        )
 
-        self.fuse = Fusion_module(opt)
+        self.fuse = FusionModule(opt)
 
         # The output networks
         self.rnn_drop_out = nn.Dropout(opt.rnn_dropout_out)
         self.regressor = nn.Sequential(
             nn.Linear(opt.rnn_hidden_size, 128),
             nn.LeakyReLU(0.1, inplace=True),
-            nn.Linear(128, 6))
+            nn.Linear(128, 6)
+        )
 
     def forward(self, fv, fv_alter, fi, dec, prev=None):
         if prev is not None:
@@ -174,21 +193,22 @@ class Pose_RNN(nn.Module):
         v_in = fv * dec[:, :, :1] + fv_alter * dec[:, :, -1:] if fv_alter is not None else fv
         fused = self.fuse(v_in, fi)
         
+        # hc is a tuple that contains hidden state(hc[0]) and cell state(hc[1])
+        # both two state have shape of (num_layers * num_directions, batch_size, hidden_size)
         out, hc = self.rnn(fused) if prev is None else self.rnn(fused, prev)
         out = self.rnn_drop_out(out)
         pose = self.regressor(out)
 
+        # Make sure that hc order conforms to the shape of (batch_size, seq_len, hidden size)
         hc = (hc[0].transpose(1, 0).contiguous(), hc[1].transpose(1, 0).contiguous())
         return pose, hc
-
-
 
 class DeepVIO(nn.Module):
     def __init__(self, opt):
         super(DeepVIO, self).__init__()
 
         self.Feature_net = Encoder(opt)
-        self.Pose_net = Pose_RNN(opt)
+        self.Pose_net = PoseRNN(opt)
         self.Policy_net = PolicyNet(opt)
         self.opt = opt
         
@@ -227,7 +247,7 @@ class DeepVIO(nn.Module):
                     decisions.append(decision)
                     logits.append(logit)
             poses.append(pose)
-            hidden = hc[0].contiguous()[:, -1, :]
+            hidden = hc[0].contiguous()[:, -1, :]   # The purpose of hc[0][:, -1,:] is to select the hidden state of the last layer for each sample. 
 
         poses = torch.cat(poses, dim=1)
         decisions = torch.cat(decisions, dim=1)

@@ -43,6 +43,7 @@ parser.add_argument('--lr_joint', type=float, default=5e-5, help='learning rate 
 parser.add_argument('--lr_fine', type=float, default=1e-6, help='learning rate for finetuning stage')
 parser.add_argument('--eta', type=float, default=0.05, help='exponential decay factor for temperature')
 parser.add_argument('--temp_init', type=float, default=5, help='initial temperature for gumbel-softmax')
+parser.add_argument('--alpha', type=float, default=100, help='weight to balance the translational loss and rotational loss.')
 parser.add_argument('--Lambda', type=float, default=3e-5, help='penalty factor for the visual encoder usage')
 
 parser.add_argument('--experiment_name', type=str, default='experiment', help='experiment name')
@@ -62,37 +63,42 @@ args = parser.parse_args()
 torch.manual_seed(args.seed)
 np.random.seed(args.seed)
 
-def update_status(ep, args, model):
-    if ep < args.epochs_warmup:  # Warmup stage
+def update_status(epoch, args, model):
+    # Warmup stage
+    if epoch < args.epochs_warmup:
         lr = args.lr_warmup
         selection = 'random'
         temp = args.temp_init
         for param in model.module.Policy_net.parameters(): # Disable the policy network
             param.requires_grad = False
-    elif ep >= args.epochs_warmup and ep < args.epochs_warmup + args.epochs_joint: # Joint training stage
+
+    # Joint training stage
+    elif epoch >= args.epochs_warmup and epoch < (args.epochs_warmup + args.epochs_joint):
         lr = args.lr_joint
         selection = 'gumbel-softmax'
-        temp = args.temp_init * math.exp(-args.eta * (ep-args.epochs_warmup))
+        temp = args.temp_init * math.exp(-args.eta * (epoch - args.epochs_warmup))
         for param in model.module.Policy_net.parameters(): # Enable the policy network
             param.requires_grad = True
-    elif ep >= args.epochs_warmup + args.epochs_joint: # Finetuning stage
+
+    # Finetuning stage
+    elif epoch >= args.epochs_warmup + args.epochs_joint:
         lr = args.lr_fine
         selection = 'gumbel-softmax'
-        temp = args.temp_init * math.exp(-args.eta * (ep-args.epochs_warmup))
+        temp = args.temp_init * math.exp(-args.eta * (epoch - args.epochs_warmup))
+        
     return lr, selection, temp
 
-def train(model, optimizer, train_loader, selection, temp, logger, ep, p=0.5, weighted=False):
+def train_epoch(model, optimizer, train_loader, selection, temp, logger, ep, p=0.5, weighted=False):
     
     mse_losses = []
     penalties = []
     data_len = len(train_loader)
 
-    for i, (imgs, imus, gts, rot, weight) in enumerate(train_loader):
-
-        imgs = imgs.cuda().float()
-        imus = imus.cuda().float()
-        gts = gts.cuda().float() 
-        weight = weight.cuda().float()
+    for i, (imgs, imus, gts, rot, weights) in enumerate(train_loader):
+        imgs = imgs.cuda().float()        # imgs: (batch, seq_len=11, 3, H, W)
+        imus = imus.cuda().float()        # imus: (batch, 101, 6)
+        gts = gts.cuda().float()          # gts:  (batch, 10, 6)
+        weights = weights.cuda().float()  # weights: (batch, 17260)
 
         optimizer.zero_grad()
                 
@@ -102,24 +108,24 @@ def train(model, optimizer, train_loader, selection, temp, logger, ep, p=0.5, we
             angle_loss = torch.nn.functional.mse_loss(poses[:,:,:3], gts[:, :, :3])
             translation_loss = torch.nn.functional.mse_loss(poses[:,:,3:], gts[:, :, 3:])
         else:
-            weight = weight/weight.sum()
-            angle_loss = (weight.unsqueeze(-1).unsqueeze(-1) * (poses[:,:,:3] - gts[:, :, :3]) ** 2).mean()
-            translation_loss = (weight.unsqueeze(-1).unsqueeze(-1) * (poses[:,:,3:] - gts[:, :, 3:]) ** 2).mean()
+            weights = weights/weights.sum()
+            angle_loss = (weights.unsqueeze(-1).unsqueeze(-1) * (poses[:,:,:3] - gts[:, :, :3]) ** 2).mean()
+            translation_loss = (weights.unsqueeze(-1).unsqueeze(-1) * (poses[:,:,3:] - gts[:, :, 3:]) ** 2).mean()
         
-        pose_loss = 100 * angle_loss + translation_loss        
-        penalty = (decisions[:,:,0].float()).sum(-1).mean()
-        loss = pose_loss + args.Lambda * penalty 
+        pose_loss = args.alpha * angle_loss + translation_loss        
+        penalty_loss = (decisions[:,:,0].float()).sum(-1).mean()
+        loss = pose_loss + args.Lambda * penalty_loss 
         
         loss.backward()
         optimizer.step()
         
         if i % args.print_frequency == 0: 
-            message = f'Epoch: {ep}, iters: {i}/{data_len}, pose loss: {pose_loss.item():.6f}, penalty: {penalty.item():.6f}, loss: {loss.item():.6f}'
+            message = f'Epoch: {ep}, batch: {i}/{data_len}, pose_loss: {pose_loss.item():.6f}, penalty_loss: {penalty_loss.item():.6f}, total loss: {loss.item():.6f}'
             print(message)
             logger.info(message)
 
         mse_losses.append(pose_loss.item())
-        penalties.append(penalty.item())
+        penalties.append(penalty_loss.item())
 
     return np.mean(mse_losses), np.mean(penalties)
 
@@ -149,19 +155,22 @@ def main():
     logger.info(args)
     
     # Load the dataset
-    transform_train = [custom_transform.ToTensor(),
-                       custom_transform.Resize((args.img_h, args.img_w))]
+    transform_train = [
+        custom_transform.ToTensor(),
+        custom_transform.Resize((args.img_h, args.img_w)),
+    ]
     if args.hflip:
         transform_train += [custom_transform.RandomHorizontalFlip()]
     if args.color:
         transform_train += [custom_transform.RandomColorAug()]
     transform_train = custom_transform.Compose(transform_train)
 
-    train_dataset = KITTI(args.data_dir,
-                        sequence_length=args.seq_len,
-                        train_seqs=args.train_seq,
-                        transform=transform_train
-                        )
+    train_dataset = KITTI(
+        args.data_dir,
+        sequence_length=args.seq_len,
+        train_seqs=args.train_seq,
+        transform=transform_train
+    )
     logger.info('train_dataset: ' + str(train_dataset))
     
     train_loader = torch.utils.data.DataLoader(
@@ -185,20 +194,20 @@ def main():
     # Initialize the tester
     tester = KITTI_tester(args)
 
-    # Model initialization
+    # Initialize the model
     model = DeepVIO(args)
 
     # Continual training or not
     if args.pretrain_model is not None:
         model.load_state_dict(torch.load(args.pretrain_model))
-        print('load model %s'%args.pretrain_model)
-        logger.info('load model %s'%args.pretrain_model)
+        print('load model from %s'%args.pretrain_model)
+        logger.info('load model from %s'%args.pretrain_model)
     else:
         print('Training from scratch')
         logger.info('Training from scratch')
     
-    # Use the pre-trained flownet or not
-    if args.pretrain_flownet and args.pretrain_model is None:
+    # Use the pre-trained flownet (only if training from scratch) or not
+    if args.pretrain_model is None and args.pretrain_flownet is not None:
         pretrained_w = torch.load(args.pretrain_flownet, map_location='cpu')
         model_dict = model.Feature_net.state_dict()
         update_dict = {k: v for k, v in pretrained_w['state_dict'].items() if k in model_dict}
@@ -208,9 +217,9 @@ def main():
     # Feed model to GPU
     model.cuda(gpu_ids[0])
     model = torch.nn.DataParallel(model, device_ids = gpu_ids)
-
-    pretrain = args.pretrain_model 
-    init_epoch = int(pretrain[-7:-4])+1 if args.pretrain_model is not None else 0    
+    
+    # Initialize or restore the training epoch
+    init_epoch = int(args.pretrain_model[-7:-4]) + 1 if args.pretrain_model is not None else 0    
     
     # Initialize the optimizer
     if args.optimizer == 'SGD':
@@ -221,24 +230,25 @@ def main():
     
     best = 10000
 
-    for ep in range(init_epoch, args.epochs_warmup + args.epochs_joint + args.epochs_fine):
+    # Start training
+    for epoch in range(init_epoch, args.epochs_warmup + args.epochs_joint + args.epochs_fine):
         
-        lr, selection, temp = update_status(ep, args, model)
+        lr, selection, temp = update_status(epoch, args, model)
         optimizer.param_groups[0]['lr'] = lr
-        message = f'Epoch: {ep}, lr: {lr}, selection: {selection}, temperaure: {temp:.5f}'
+        message = f'Epoch: {epoch}, lr: {lr}, selection: {selection}, temperaure: {temp:.5f}'
         print(message)
         logger.info(message)
 
         model.train()
-        avg_pose_loss, avg_penalty_loss = train(model, optimizer, train_loader, selection, temp, logger, ep, p=0.5)
+        avg_pose_loss, avg_penalty_loss = train_epoch(model, optimizer, train_loader, selection, temp, logger, epoch, p=0.5)
         
         # Save the model after training
-        torch.save(model.module.state_dict(), f'{checkpoints_dir}/{ep:003}.pth')
-        message = f'Epoch {ep} training finished, pose loss: {avg_pose_loss:.6f}, penalty_loss: {avg_penalty_loss:.6f}, model saved'
+        torch.save(model.module.state_dict(), f'{checkpoints_dir}/{epoch:003}.pth')
+        message = f'Epoch {epoch} training finished, pose loss: {avg_pose_loss:.6f}, penalty_loss: {avg_penalty_loss:.6f}, model saved'
         print(message)
         logger.info(message)
         
-        if ep > args.epochs_warmup+args.epochs_joint:
+        if epoch > args.epochs_warmup+args.epochs_joint:
             # Evaluate the model
             print('Evaluating the model')
             logger.info('Evaluating the model')
@@ -256,7 +266,7 @@ def main():
                 best = t_rel 
                 torch.save(model.module.state_dict(), f'{checkpoints_dir}/best_{best:.2f}.pth')
         
-            message = f'Epoch {ep} evaluation finished , t_rel: {t_rel:.4f}, r_rel: {r_rel:.4f}, t_rmse: {t_rmse:.4f}, r_rmse: {r_rmse:.4f}, usage: {usage:.4f}, best t_rel: {best:.4f}'
+            message = f'Epoch {epoch} evaluation finished , t_rel: {t_rel:.4f}, r_rel: {r_rel:.4f}, t_rmse: {t_rmse:.4f}, r_rmse: {r_rmse:.4f}, usage: {usage:.4f}, best t_rel: {best:.4f}'
             logger.info(message)
             print(message)
     
