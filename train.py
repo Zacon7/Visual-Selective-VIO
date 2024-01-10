@@ -1,5 +1,4 @@
 import argparse
-import os
 import torch
 import logging
 from path import Path
@@ -24,7 +23,7 @@ parser.add_argument('--img_w', type=int, default=512, help='image width')
 parser.add_argument('--img_h', type=int, default=256, help='image height')
 parser.add_argument('--v_f_len', type=int, default=512, help='visual feature length')
 parser.add_argument('--i_f_len', type=int, default=256, help='imu feature length')
-parser.add_argument('--fuse_method', type=str, default='cat', help='fusion method [cat, soft, hard]')
+parser.add_argument('--fuse_method', type=str, default='soft', help='fusion method [cat, soft, hard]')
 parser.add_argument('--imu_dropout', type=float, default=0, help='dropout for the IMU encoder')
 
 parser.add_argument('--rnn_hidden_size', type=int, default=1024, help='size of the LSTM latent')
@@ -32,9 +31,9 @@ parser.add_argument('--rnn_dropout_out', type=float, default=0.2, help='dropout 
 parser.add_argument('--rnn_dropout_between', type=float, default=0.2, help='dropout within LSTM')
 
 parser.add_argument('--weight_decay', type=float, default=5e-6, help='weight decay for the optimizer')
-parser.add_argument('--batch_size', type=int, default=4, help='batch size')
+parser.add_argument('--batch_size', type=int, default=16, help='batch size')
 parser.add_argument('--seq_len', type=int, default=11, help='sequence length for LSTM')
-parser.add_argument('--workers', type=int, default=4, help='number of workers')
+parser.add_argument('--workers', type=int, default=16, help='number of workers')
 parser.add_argument('--epochs_warmup', type=int, default=40, help='number of epochs for warmup')
 parser.add_argument('--epochs_joint', type=int, default=40, help='number of epochs for joint training')
 parser.add_argument('--epochs_fine', type=int, default=20, help='number of epochs for finetuning')
@@ -46,7 +45,7 @@ parser.add_argument('--temp_init', type=float, default=5, help='initial temperat
 parser.add_argument('--alpha', type=float, default=100, help='weight to balance the translational loss and rotational loss.')
 parser.add_argument('--Lambda', type=float, default=3e-5, help='penalty factor for the visual encoder usage')
 
-parser.add_argument('--experiment_name', type=str, default='experiment', help='experiment name')
+parser.add_argument('--experiment_name', type=str, default='soft', help='experiment name')
 parser.add_argument('--optimizer', type=str, default='Adam', help='type of optimizer [Adam, SGD]')
 
 parser.add_argument('--pretrain_flownet',type=str, default='./pretrain_models/flownets_bn_EPE2.459.pth.tar', help='wehther to use the pre-trained flownet')
@@ -133,7 +132,7 @@ def train_epoch(model, optimizer, train_loader, selection, temp, logger, ep, p=0
 def main():
 
     # Create Dir
-    experiment_dir = Path('./results')
+    experiment_dir = Path('./results/train')
     experiment_dir.mkdir_p()
     file_dir = experiment_dir.joinpath('{}/'.format(args.experiment_name))
     file_dir.mkdir_p()

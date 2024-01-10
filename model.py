@@ -214,7 +214,7 @@ class DeepVIO(nn.Module):
         
         initialization(self)
 
-    def forward(self, img, imu, is_first=True, hc=None, temp=5, selection='gumbel-softmax', p=0.5):
+    def forward(self, img, imu, is_first=True, hc=None, temp=5, selection='gumbel-softmax', p=0.2):
 
         fv, fi = self.Feature_net(img, imu)
         batch_size = fv.shape[0]

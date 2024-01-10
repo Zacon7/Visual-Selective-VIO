@@ -1,0 +1,14 @@
+# vscode
+.vscode/
+
+# cache
+__pycache__/
+
+# datasets
+data/oxts_modified/
+data/poses/
+data/sequences/
+
+# pretrain models & train results
+pretrain_models/
+results/

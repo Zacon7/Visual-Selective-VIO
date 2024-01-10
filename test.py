@@ -1,5 +1,4 @@
 import argparse
-import os
 import torch
 import logging
 from path import Path
@@ -32,9 +31,9 @@ parser.add_argument('--rnn_hidden_size', type=int, default=1024, help='size of t
 parser.add_argument('--rnn_dropout_out', type=float, default=0.2, help='dropout for the LSTM output layer')
 parser.add_argument('--rnn_dropout_between', type=float, default=0.2, help='dropout within LSTM')
 
-parser.add_argument('--workers', type=int, default=4, help='number of workers')
-parser.add_argument('--experiment_name', type=str, default='test', help='experiment name')
-parser.add_argument('--pretrain_model', type=str, default='./pretrain_models/vf_512_if_256_3e-05.model', help='path to the pretrained model')
+parser.add_argument('--workers', type=int, default=16, help='number of workers')
+parser.add_argument('--experiment_name', type=str, default='cat', help='experiment name')
+parser.add_argument('--pretrain_model', type=str, default='./results/train/cat/checkpoints/best_5.82.pth', help='path to the pretrained model')
 
 args = parser.parse_args()
 
@@ -45,11 +44,9 @@ np.random.seed(args.seed)
 def main():
 
     # Create Dir
-    experiment_dir = Path('./results')
+    experiment_dir = Path('./results/test')
     experiment_dir.mkdir_p()
-    file_dir = experiment_dir.joinpath('{}/'.format(args.experiment_name))
-    file_dir.mkdir_p()
-    result_dir = file_dir.joinpath('files/')
+    result_dir = experiment_dir.joinpath('{}/'.format(args.experiment_name))
     result_dir.mkdir_p()
     
     # GPU selections
