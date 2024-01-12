@@ -5,6 +5,7 @@ from torch.nn.init import kaiming_normal_, orthogonal_
 import numpy as np
 from torch.distributions.utils import broadcast_all, probs_to_logits, logits_to_probs, lazy_property, clamp_probs
 import torch.nn.functional as F
+from csflow import CSFlow
 
 
 def conv(batchNorm, in_planes, out_planes, kernel_size=3, stride=1, dropout=0):
@@ -61,6 +62,7 @@ class Encoder(nn.Module):
     def __init__(self, opt):
         super(Encoder, self).__init__()
         self.opt = opt
+
         self.conv1 = conv(True, 6, 64, kernel_size=7, stride=2, dropout=0.2)
         self.conv2 = conv(True, 64, 128, kernel_size=5, stride=2, dropout=0.2)
         self.conv3 = conv(True, 128, 256, kernel_size=5, stride=2, dropout=0.2)
@@ -71,36 +73,77 @@ class Encoder(nn.Module):
         self.conv5_1 = conv(True, 512, 512, kernel_size=3, stride=1, dropout=0.2)
         self.conv6 = conv(True, 512, 1024, kernel_size=3, stride=2, dropout=0.5)
 
-        # Compute the shape based on diff image size
-        __tmp = Variable(torch.zeros(1, 6, opt.img_w, opt.img_h))
-        __tmp = self.encode_image(__tmp)
+        # define the Flow Encoder based on opt.flow_block
+        if self.opt.flow_block == 'flownet':
+            # Compute the shape based on diff image size
+            __tmp = Variable(torch.zeros(1, 6, opt.img_h, opt.img_w))
+            __tmp = self.encode_image(__tmp)
+            self.visual_head = nn.Linear(int(np.prod(__tmp.size())), opt.v_f_len)
 
-        self.visual_head = nn.Linear(int(np.prod(__tmp.size())), opt.v_f_len)
+        elif self.opt.flow_block == 'csflow':
+            self.conv1 = conv(True, 2, 64, kernel_size=7, stride=2, dropout=0.2)
+            self.csflow = CSFlow()
+            self.csflow.train()
+            for m in self.csflow.modules():
+                if isinstance(m, torch.nn.BatchNorm2d):
+                    m.eval()
+            # Compute the shape based on diff image size
+            __tmp = [
+                Variable(torch.zeros(1, 3, opt.img_h, opt.img_w)), 
+                Variable(torch.zeros(1, 3, opt.img_h, opt.img_w))
+            ]
+            __tmp = self.csflow(__tmp)
+            __tmp = self.encode_image(__tmp)
+            self.visual_head = nn.Linear(int(np.prod(__tmp.size())), opt.v_f_len)
+
+        # define the IMU Encoder
         self.inertial_encoder = InertialEncoder(opt)
 
-    def forward(self, img, imu):
+    def forward(self, imgs, imus):
         ''' 
         input:
-            img: (batch, seq_len=11, 3, H, W)
-            imu: (batch, 101, 6)
+            imgs: (batch, seq_len=11, 3, H, W)
+            imus: (batch, 101, 6)
         return:
             fv: (batch, seq_len=10, v_f_len=512)
             fi: (batch, seq_len=10, i_f_len=256)
         '''
-        fv = torch.cat((img[:, :-1], img[:, 1:]), dim=2) # fv: (batch, seq_len=10, 6, H, W)
+
+        # feed imgs into Flow Encoder
+        if self.opt.flow_block == 'flownet':
+            fv = self.flownet_encoder(imgs)
+
+        elif self.opt.flow_block == 'csflow':
+            fv = self.csflow_encoder(imgs)
+
+        # feed imus into IMU Encoder
+        fi = torch.cat([imus[:, i * 10:i * 10 + 11, :].unsqueeze(1) for i in range(10)], dim=1) # fi: (batch, seq_len=10, 11, 6)
+        fi = self.inertial_encoder(fi)
+
+        return fv, fi
+
+    def flownet_encoder(self, imgs):
+        fv = torch.cat((imgs[:, :-1], imgs[:, 1:]), dim=2) # fv: (batch, seq_len=10, 6, H, W)
         batch_size = fv.size(0)
         seq_len = fv.size(1)
-
-        # Image Encoder
         fv = fv.view(batch_size * seq_len, fv.size(2), fv.size(3), fv.size(4))
-        fv = self.encode_image(fv)                # fv: (batch *seq_len=10, 1024, H, W)
-        fv = fv.view(batch_size, seq_len, -1)     # fv: (batch, seq_len=10, 1024*H*W)
+        fv = self.encode_image(fv)                # fv: (batch *seq_len=10, 1024, 4, 8)
+        fv = fv.view(batch_size, seq_len, -1)     # fv: (batch, seq_len=10, 1024*4*8)
         fv = self.visual_head(fv)                 # fv: (batch, seq_len=10, v_f_len=512)
-        
-        # IMU Encoder
-        fi = torch.cat([imu[:, i * 10:i * 10 + 11, :].unsqueeze(1) for i in range(seq_len)], dim=1) # fi: (batch, seq_len=10, 11, 6)
-        fi = self.inertial_encoder(fi)  
-        return fv, fi
+        return fv
+
+    def csflow_encoder(self, imgs):
+        batch_size, seq_len = imgs.size(0), imgs.size(1) - 1
+        C, H, W = imgs.size(2), imgs.size(3), imgs.size(4)
+        imgs_1 = imgs[:, :-1].contiguous().view(batch_size * seq_len, C, H, W)  # imgs_1: (batch *seq_len=10, 3, H, W)
+        imgs_2 = imgs[:, 1:].contiguous().view(batch_size * seq_len, C, H, W)   # imgs_2: (batch *seq_len=10, 3, H, W)
+        pair_imgs = [imgs_1, imgs_2]
+        fv = self.csflow(pair_imgs)             # fv: (batch *seq_len=10, 2, H, W)
+        fv = self.encode_image(fv)              # fv: (batch *seq_len=10, 1024, 4, 8)
+
+        fv = fv.view(batch_size, seq_len, -1)   # fv: (batch, seq_len=10, 1024*4*8)
+        fv = self.visual_head(fv)               # fv: (batch, seq_len=10, v_f_len=512)
+        return fv
 
     def encode_image(self, x):
         out_conv2 = self.conv2(self.conv1(x))
@@ -214,9 +257,9 @@ class DeepVIO(nn.Module):
         
         initialization(self)
 
-    def forward(self, img, imu, is_first=True, hc=None, temp=5, selection='gumbel-softmax', p=0.2):
+    def forward(self, imgs, imus, is_first=True, hc=None, temp=5, selection='gumbel-softmax', p=0.2):
 
-        fv, fi = self.Feature_net(img, imu)
+        fv, fi = self.Feature_net(imgs, imus)
         batch_size = fv.shape[0]
         seq_len = fv.shape[1]
 
