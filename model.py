@@ -5,8 +5,7 @@ from torch.nn.init import kaiming_normal_, orthogonal_
 import numpy as np
 from torch.distributions.utils import broadcast_all, probs_to_logits, logits_to_probs, lazy_property, clamp_probs
 import torch.nn.functional as F
-from csflow import CSFlow
-
+from FastFlowNet import FastFlowNet
 
 def conv(batchNorm, in_planes, out_planes, kernel_size=3, stride=1, dropout=0):
     if batchNorm:
@@ -63,37 +62,28 @@ class Encoder(nn.Module):
         super(Encoder, self).__init__()
         self.opt = opt
 
-        self.conv1 = conv(True, 6, 64, kernel_size=7, stride=2, dropout=0.2)
-        self.conv2 = conv(True, 64, 128, kernel_size=5, stride=2, dropout=0.2)
-        self.conv3 = conv(True, 128, 256, kernel_size=5, stride=2, dropout=0.2)
-        self.conv3_1 = conv(True, 256, 256, kernel_size=3, stride=1, dropout=0.2)
-        self.conv4 = conv(True, 256, 512, kernel_size=3, stride=2, dropout=0.2)
-        self.conv4_1 = conv(True, 512, 512, kernel_size=3, stride=1, dropout=0.2)
-        self.conv5 = conv(True, 512, 512, kernel_size=3, stride=2, dropout=0.2)
-        self.conv5_1 = conv(True, 512, 512, kernel_size=3, stride=1, dropout=0.2)
-        self.conv6 = conv(True, 512, 1024, kernel_size=3, stride=2, dropout=0.5)
+        # define the Flow Encoder based on opt.flow_encoder
+        if self.opt.flow_encoder == 'flownet':
+            self.conv1 = conv(True, 6, 64, kernel_size=7, stride=2, dropout=0.2)
+            self.conv2 = conv(True, 64, 128, kernel_size=5, stride=2, dropout=0.2)
+            self.conv3 = conv(True, 128, 256, kernel_size=5, stride=2, dropout=0.2)
+            self.conv3_1 = conv(True, 256, 256, kernel_size=3, stride=1, dropout=0.2)
+            self.conv4 = conv(True, 256, 512, kernel_size=3, stride=2, dropout=0.2)
+            self.conv4_1 = conv(True, 512, 512, kernel_size=3, stride=1, dropout=0.2)
+            self.conv5 = conv(True, 512, 512, kernel_size=3, stride=2, dropout=0.2)
+            self.conv5_1 = conv(True, 512, 512, kernel_size=3, stride=1, dropout=0.2)
+            self.conv6 = conv(True, 512, 1024, kernel_size=3, stride=2, dropout=0.5)
 
-        # define the Flow Encoder based on opt.flow_block
-        if self.opt.flow_block == 'flownet':
-            # Compute the shape based on diff image size
             __tmp = Variable(torch.zeros(1, 6, opt.img_h, opt.img_w))
-            __tmp = self.encode_image(__tmp)
+            __tmp = self.flownet(__tmp)
             self.visual_head = nn.Linear(int(np.prod(__tmp.size())), opt.v_f_len)
 
-        elif self.opt.flow_block == 'csflow':
-            self.conv1 = conv(True, 2, 64, kernel_size=7, stride=2, dropout=0.2)
-            self.csflow = CSFlow()
-            self.csflow.train()
-            for m in self.csflow.modules():
-                if isinstance(m, torch.nn.BatchNorm2d):
-                    m.eval()
-            # Compute the shape based on diff image size
-            __tmp = [
-                Variable(torch.zeros(1, 3, opt.img_h, opt.img_w)), 
-                Variable(torch.zeros(1, 3, opt.img_h, opt.img_w))
-            ]
-            __tmp = self.csflow(__tmp)
-            __tmp = self.encode_image(__tmp)
+        elif self.opt.flow_encoder == 'fastflownet':
+            self.fastflownet = FastFlowNet()
+            self.fastflownet.train()
+
+            __tmp = Variable(torch.zeros(1, 6, opt.img_h, opt.img_w))
+            __tmp = self.fastflownet(__tmp)
             self.visual_head = nn.Linear(int(np.prod(__tmp.size())), opt.v_f_len)
 
         # define the IMU Encoder
@@ -110,11 +100,17 @@ class Encoder(nn.Module):
         '''
 
         # feed imgs into Flow Encoder
-        if self.opt.flow_block == 'flownet':
-            fv = self.flownet_encoder(imgs)
+        fv = torch.cat((imgs[:, :-1], imgs[:, 1:]), dim=2)  # fv: (batch, seq_len=10, 6, H, W)
+        batch_size, seq_len = fv.size(0), fv.size(1)
+        fv = fv.view(batch_size * seq_len, fv.size(2), fv.size(3), fv.size(4))
 
-        elif self.opt.flow_block == 'csflow':
-            fv = self.csflow_encoder(imgs)
+        if self.opt.flow_encoder == 'flownet':
+            fv = self.flownet(fv)                 # fv: (batch* seq_len=10, 1024, 4, 8)
+        elif self.opt.flow_encoder == 'fastflownet':
+            fv = self.fastflownet(fv)             # fv: (batch* seq_len=10, 2, 64, 128)
+
+        fv = fv.view(batch_size, seq_len, -1)     # fv: (batch, seq_len=10, -1)
+        fv = self.visual_head(fv)                 # fv: (batch, seq_len=10, v_f_len=512)
 
         # feed imus into IMU Encoder
         fi = torch.cat([imus[:, i * 10:i * 10 + 11, :].unsqueeze(1) for i in range(10)], dim=1) # fi: (batch, seq_len=10, 11, 6)
@@ -122,30 +118,7 @@ class Encoder(nn.Module):
 
         return fv, fi
 
-    def flownet_encoder(self, imgs):
-        fv = torch.cat((imgs[:, :-1], imgs[:, 1:]), dim=2) # fv: (batch, seq_len=10, 6, H, W)
-        batch_size = fv.size(0)
-        seq_len = fv.size(1)
-        fv = fv.view(batch_size * seq_len, fv.size(2), fv.size(3), fv.size(4))
-        fv = self.encode_image(fv)                # fv: (batch *seq_len=10, 1024, 4, 8)
-        fv = fv.view(batch_size, seq_len, -1)     # fv: (batch, seq_len=10, 1024*4*8)
-        fv = self.visual_head(fv)                 # fv: (batch, seq_len=10, v_f_len=512)
-        return fv
-
-    def csflow_encoder(self, imgs):
-        batch_size, seq_len = imgs.size(0), imgs.size(1) - 1
-        C, H, W = imgs.size(2), imgs.size(3), imgs.size(4)
-        imgs_1 = imgs[:, :-1].contiguous().view(batch_size * seq_len, C, H, W)  # imgs_1: (batch *seq_len=10, 3, H, W)
-        imgs_2 = imgs[:, 1:].contiguous().view(batch_size * seq_len, C, H, W)   # imgs_2: (batch *seq_len=10, 3, H, W)
-        pair_imgs = [imgs_1, imgs_2]
-        fv = self.csflow(pair_imgs)             # fv: (batch *seq_len=10, 2, H, W)
-        fv = self.encode_image(fv)              # fv: (batch *seq_len=10, 1024, 4, 8)
-
-        fv = fv.view(batch_size, seq_len, -1)   # fv: (batch, seq_len=10, 1024*4*8)
-        fv = self.visual_head(fv)               # fv: (batch, seq_len=10, v_f_len=512)
-        return fv
-
-    def encode_image(self, x):
+    def flownet(self, x):
         out_conv2 = self.conv2(self.conv1(x))
         out_conv3 = self.conv3_1(self.conv3(out_conv2))
         out_conv4 = self.conv4_1(self.conv4(out_conv3))

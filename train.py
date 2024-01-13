@@ -31,9 +31,9 @@ parser.add_argument('--rnn_dropout_out', type=float, default=0.2, help='dropout 
 parser.add_argument('--rnn_dropout_between', type=float, default=0.2, help='dropout within LSTM')
 
 parser.add_argument('--weight_decay', type=float, default=5e-6, help='weight decay for the optimizer')
-parser.add_argument('--batch_size', type=int, default=4, help='batch size')
+parser.add_argument('--batch_size', type=int, default=2, help='batch size')
 parser.add_argument('--seq_len', type=int, default=11, help='sequence length for LSTM')
-parser.add_argument('--workers', type=int, default=6, help='number of workers')
+parser.add_argument('--workers', type=int, default=10, help='number of workers')
 parser.add_argument('--epochs_warmup', type=int, default=40, help='number of epochs for warmup')
 parser.add_argument('--epochs_joint', type=int, default=40, help='number of epochs for joint training')
 parser.add_argument('--epochs_fine', type=int, default=20, help='number of epochs for finetuning')
@@ -45,13 +45,12 @@ parser.add_argument('--temp_init', type=float, default=5, help='initial temperat
 parser.add_argument('--alpha', type=float, default=100, help='weight to balance the translational loss and rotational loss.')
 parser.add_argument('--Lambda', type=float, default=3e-5, help='penalty factor for the visual encoder usage')
 
-parser.add_argument('--experiment_name', type=str, default='csflow_hard', help='experiment name')
+parser.add_argument('--experiment_name', type=str, default='fastflownet_hard', help='experiment name')
 parser.add_argument('--optimizer', type=str, default='Adam', help='type of optimizer [Adam, SGD]')
 
-
-parser.add_argument('--flow_block',type=str, default='csflow', help='choose to use the flownet or csflow')
-parser.add_argument('--pretrain_flownet',type=str, default='pretrain_models/CSFlow-kitti.pth', help='wehther to use the pre-trained flownet')
-parser.add_argument('--pretrain_model', type=str, default=None, help='path to the pretrained model')
+parser.add_argument('--ckpt_model', type=str, default=None, help='path to the checkpoint model')
+parser.add_argument('--flow_encoder',type=str, default='fastflownet', help='choose to use the flownet or fastflownet')
+parser.add_argument('--pretrain_flownet',type=str, default='pretrain_models/fastflownet_ft_kitti.pth', help='wehther to use the pre-trained flownet')
 parser.add_argument('--hflip', default=False, action='store_true', help='whether to use horizonal flipping as augmentation')
 parser.add_argument('--color', default=False, action='store_true', help='whether to use color augmentations')
 
@@ -199,22 +198,22 @@ def main():
     model = DeepVIO(args)
 
     # Continual training or not
-    if args.pretrain_model is not None:
-        model.load_state_dict(torch.load(args.pretrain_model))
-        print('load model from %s'%args.pretrain_model)
-        logger.info('load model from %s'%args.pretrain_model)
+    if args.ckpt_model is not None:
+        model.load_state_dict(torch.load(args.ckpt_model))
+        print('load checkpoint from %s'%args.ckpt_model)
+        logger.info('load checkpoint from %s'%args.ckpt_model)
     else:
         print('Training from scratch')
         logger.info('Training from scratch')
     
     # Use the pre-trained flownet (only if training from scratch) or not
-    if args.pretrain_model is None and args.pretrain_flownet is not None:
-        pretrained_w = torch.load(args.pretrain_flownet, map_location='cpu')
+    if args.ckpt_model is None and args.pretrain_flownet is not None:
         model_dict = model.Feature_net.state_dict()
-        if args.flow_block == 'flownet':
-            update_dict = {k: v for k, v in pretrained_w['state_dict'].items() if k in model_dict}
-        elif args.flow_block == 'csflow':
-            update_dict = {k: v for k, v in pretrained_w.items() if k in model_dict}
+        pretrained_flownet = torch.load(args.pretrain_flownet, map_location='cpu')
+        if args.flow_encoder == 'flownet':
+            update_dict = {k: v for k, v in pretrained_flownet['state_dict'].items() if k in model_dict}
+        elif args.flow_encoder == 'fastflownet':
+            update_dict = {k: v for k, v in pretrained_flownet.items() if k in model_dict}
         model_dict.update(update_dict)
         model.Feature_net.load_state_dict(model_dict)
 
@@ -223,7 +222,7 @@ def main():
     model = torch.nn.DataParallel(model, device_ids = gpu_ids)
     
     # Initialize or restore the training epoch
-    init_epoch = int(args.pretrain_model[-7:-4]) + 1 if args.pretrain_model is not None else 0    
+    init_epoch = int(args.ckpt_model[-7:-4]) + 1 if args.ckpt_model is not None else 0    
     
     # Initialize the optimizer
     if args.optimizer == 'SGD':
