@@ -68,7 +68,7 @@ class KITTI(Dataset):
             imus: (101, 6),
             gts:  (10, 6),
             rot:  a real number,
-            weights: len(17260)
+            weights: a real number
         '''
         sample = self.samples[index]
         imgs = [np.asarray(Image.open(img)) for img in sample['imgs']]

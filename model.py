@@ -106,7 +106,7 @@ class Encoder(nn.Module):
         if self.opt.flow_encoder == 'flownet':
             fv = self.flownet(fv)                 # fv: (batch* seq_len=10, 1024, 4, 8)
         elif self.opt.flow_encoder == 'fastflownet':
-            fv = self.fastflownet(fv)             # fv: (batch* seq_len=10, 2, 64, 128)
+            fv = self.fastflownet(fv)             # fv: (batch* seq_len=10, 128, 4, 8)
 
         fv = fv.view(batch_size, seq_len, -1)     # fv: (batch, seq_len=10, -1)
         fv = self.visual_head(fv)                 # fv: (batch, seq_len=10, v_f_len=512)
