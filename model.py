@@ -80,7 +80,6 @@ class Encoder(nn.Module):
 
         elif self.opt.flow_encoder == 'fastflownet':
             self.fastflownet = FastFlowNet()
-            self.fastflownet.train()
 
             __tmp = Variable(torch.zeros(1, 6, opt.img_h, opt.img_w))
             __tmp = self.fastflownet(__tmp)
