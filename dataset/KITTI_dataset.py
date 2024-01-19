@@ -15,15 +15,19 @@ from scipy.ndimage import convolve1d
 IMU_FREQ = 10
 
 class KITTI(Dataset):
-    def __init__(self, data_root,
+    def __init__(self, 
+                 data_root,
                  sequence_length=11,
                  train_seqs=['00', '01', '02', '04', '06', '08', '09'],
-                 transform=None):
+                 transform=None,
+                 load_cache=False
+    ):
         
         self.data_root = Path(data_root)
         self.sequence_length = sequence_length
         self.transform = transform
         self.train_seqs = train_seqs
+        self.load_cache=load_cache
         self.make_dataset()
     
     def make_dataset(self):
@@ -64,20 +68,23 @@ class KITTI(Dataset):
     def __getitem__(self, index):
         '''
         return:
-            imgs: (11, 3, H, W),
+            imgs: (11, 3, H, W), or len(11): [img_path0, img_path1, ..., img_path_10]
             imus: (101, 6),
             gts:  (10, 6),
             rot:  a real number,
             weights: a real number
         '''
         sample = self.samples[index]
-        imgs = [np.asarray(Image.open(img)) for img in sample['imgs']]
-        
-        if self.transform is not None:
-            imgs, imus, gts = self.transform(np.asarray(imgs), np.copy(sample['imus']), np.copy(sample['gts']))
+
+        if self.load_cache:
+            imgs = sample['imgs']   # only img_path
         else:
-            imus = np.copy(sample['imus'])
-            gts = np.copy(sample['gts']).astype(np.float32)
+            imgs = [np.asarray(Image.open(img)) for img in sample['imgs']]
+            if self.transform is not None:
+                imgs = self.transform(np.asarray(imgs))
+
+        imus = np.copy(sample['imus'])
+        gts = np.copy(sample['gts']).astype(np.float32)
         
         rot = sample['rot'].astype(np.float32)
         weight = self.weights[index]

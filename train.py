@@ -9,6 +9,7 @@ from collections import defaultdict
 from utils.kitti_eval import KITTI_tester
 import numpy as np
 import math
+import pickle
 
 parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument('--data_dir', type=str, default='./data', help='path to the dataset')
@@ -31,9 +32,9 @@ parser.add_argument('--rnn_dropout_out', type=float, default=0.2, help='dropout 
 parser.add_argument('--rnn_dropout_between', type=float, default=0.2, help='dropout within LSTM')
 
 parser.add_argument('--weight_decay', type=float, default=5e-6, help='weight decay for the optimizer')
-parser.add_argument('--batch_size', type=int, default=6, help='batch size')
+parser.add_argument('--batch_size', type=int, default=16, help='batch size')
 parser.add_argument('--seq_len', type=int, default=11, help='sequence length for LSTM')
-parser.add_argument('--workers', type=int, default=6, help='number of workers')
+parser.add_argument('--workers', type=int, default=16, help='number of workers')
 parser.add_argument('--epochs_warmup', type=int, default=40, help='number of epochs for warmup')
 parser.add_argument('--epochs_joint', type=int, default=40, help='number of epochs for joint training')
 parser.add_argument('--epochs_fine', type=int, default=20, help='number of epochs for finetuning')
@@ -45,12 +46,15 @@ parser.add_argument('--temp_init', type=float, default=5, help='initial temperat
 parser.add_argument('--alpha', type=float, default=100, help='weight to balance the translational loss and rotational loss.')
 parser.add_argument('--Lambda', type=float, default=3e-5, help='penalty factor for the visual encoder usage')
 
-parser.add_argument('--experiment_name', type=str, default='test_newfastflow', help='experiment name')
+parser.add_argument('--experiment_name', type=str, default='flownet_hard_new', help='experiment name')
 parser.add_argument('--optimizer', type=str, default='Adam', help='type of optimizer [Adam, SGD]')
 
+parser.add_argument('--load_cache', default=True, help='whether to load the pickle dataset cache')
+parser.add_argument('--pkl_path', type=str, default='./dataset/kitti.pkl', help='whether to load the pickle dataset cache')
+
 parser.add_argument('--ckpt_model', type=str, default=None, help='path to the checkpoint model')
-parser.add_argument('--flow_encoder',type=str, default='fastflownet', help='choose to use the flownet or fastflownet')
-parser.add_argument('--pretrain_flownet',type=str, default='pretrain_models/fastflownet_ft_kitti.pth', help='wehther to use the pre-trained flownet')
+parser.add_argument('--flow_encoder',type=str, default='flownet', help='choose to use the flownet or fastflownet')
+parser.add_argument('--pretrain_flownet',type=str, default='pretrain_models/flownets_bn_EPE2.459.pth.tar', help='wehther to use the pre-trained flownet')
 parser.add_argument('--hflip', default=False, action='store_true', help='whether to use horizonal flipping as augmentation')
 parser.add_argument('--color', default=False, action='store_true', help='whether to use color augmentations')
 
@@ -88,17 +92,25 @@ def update_status(epoch, args, model):
         
     return lr, selection, temp
 
-def train_epoch(model, optimizer, train_loader, selection, temp, logger, ep, p=0.5, weighted=False):
+def train_epoch(model, optimizer, train_loader, image_cache, selection, temp, logger, ep, p=0.5, weighted=False):
     
     mse_losses = []
     penalties = []
     data_len = len(train_loader)
 
     for i, (imgs, imus, gts, rot, weights) in enumerate(train_loader):
-        imgs = imgs.cuda().float()        # imgs: (batch, seq_len=11, 3, H, W)
-        imus = imus.cuda().float()        # imus: (batch, 101, 6)
-        gts = gts.cuda().float()          # gts:  (batch, 10, 6)
-        weights = weights.cuda().float()  # weights: (batch, 1)
+        if image_cache is not None:
+            all_imgs = []
+            for seq_imgs in imgs:
+                batch_imgs = [image_cache[img_path] for img_path in seq_imgs]   # len(batch): 3, H, W
+                all_imgs.append(torch.stack(batch_imgs, dim=0)) # len(11): batch, 3, H, W
+            imgs = torch.stack(all_imgs, dim=1) # imgs: (batch, seq_len=11, 3, H, W)
+
+
+        imgs = imgs.cuda().float()          # imgs: (batch, seq_len=11, 3, H, W)
+        imus = imus.cuda().float()          # imus: (batch, 101, 6)
+        gts = gts.cuda().float()            # gts:  (batch, 10, 6)
+        weights = weights.cuda().float()    # weights: (batch, 1)
 
         optimizer.zero_grad()
                 
@@ -146,7 +158,7 @@ def main():
     logger = logging.getLogger(args.experiment_name)
     logger.setLevel(logging.INFO)
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    file_handler = logging.FileHandler(str(log_dir) + '/train_%s.txt'%args.experiment_name)
+    file_handler = logging.FileHandler(str(log_dir) + '/%s.txt'%args.experiment_name)
     file_handler.setLevel(logging.INFO)
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
@@ -165,11 +177,18 @@ def main():
         transform_train += [custom_transform.RandomColorAug()]
     transform_train = custom_transform.Compose(transform_train)
 
+    image_cache = None
+    if args.load_cache:
+        # Load the dataset from the .pkl file
+        with open(args.pkl_path, 'rb') as f:
+            image_cache = pickle.load(f)
+            
     train_dataset = KITTI(
         args.data_dir,
         sequence_length=args.seq_len,
         train_seqs=args.train_seq,
-        transform=transform_train
+        transform=transform_train,
+        load_cache=args.load_cache
     )
     logger.info('train_dataset: ' + str(train_dataset))
     
@@ -243,7 +262,7 @@ def main():
         logger.info(message)
 
         model.train()
-        avg_pose_loss, avg_penalty_loss = train_epoch(model, optimizer, train_loader, selection, temp, logger, epoch, p=0.5)
+        avg_pose_loss, avg_penalty_loss = train_epoch(model, optimizer, train_loader, image_cache, selection, temp, logger, epoch, p=0.5)
         
         # Save the model after training
         torch.save(model.module.state_dict(), f'{checkpoints_dir}/{epoch:003}.pth')

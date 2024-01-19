@@ -6,6 +6,8 @@ __pycache__/
 
 # datasets
 data/*
+dataset/kitti.pkl
+dataset/MNIST/
 
 # pretrain models & train results
 pretrain_models/
