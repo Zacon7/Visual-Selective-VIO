@@ -25,16 +25,16 @@ class FastFlowNet(nn.Module):
     def __init__(self):
         super(FastFlowNet, self).__init__()
 
-        self.pconv1_1 = convrelu(3, 16, kernel_size=3, stride=2, dropout=0.1)
-        self.pconv1_2 = convrelu(16, 16, kernel_size=3, stride=1, dropout=0.1)
-        self.pconv2_1 = convrelu(16, 32, kernel_size=3, stride=2, dropout=0.1)
-        self.pconv2_2 = convrelu(32, 32, kernel_size=3, stride=1, dropout=0.1)
-        self.pconv2_3 = convrelu(32, 32, kernel_size=3, stride=1, dropout=0.1)
-        self.pconv3_1 = convrelu(32, 64, kernel_size=3, stride=2, dropout=0.2)
-        self.pconv3_2 = convrelu(64, 64, kernel_size=3, stride=1, dropout=0.2)
-        self.pconv3_3 = convrelu(64, 64, kernel_size=3, stride=1, dropout=0.2)
+        self.pconv1_1 = convrelu(3, 16, kernel_size=3, stride=2)
+        self.pconv1_2 = convrelu(16, 16, kernel_size=3, stride=1)
+        self.pconv2_1 = convrelu(16, 32, kernel_size=3, stride=2)
+        self.pconv2_2 = convrelu(32, 32, kernel_size=3, stride=1)
+        self.pconv2_3 = convrelu(32, 32, kernel_size=3, stride=1)
+        self.pconv3_1 = convrelu(32, 64, kernel_size=3, stride=2)
+        self.pconv3_2 = convrelu(64, 64, kernel_size=3, stride=1)
+        self.pconv3_3 = convrelu(64, 64, kernel_size=3, stride=1)
 
-        self.dw_conv = convrelu(128, 256, kernel_size=1, stride=1, batch_norm=True, dropout=0.2)
+        self.dw_conv = convrelu(128, 256, kernel_size=1, stride=1, batch_norm=True)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):

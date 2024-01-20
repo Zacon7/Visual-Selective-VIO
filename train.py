@@ -2,10 +2,10 @@ import argparse
 import torch
 import logging
 from path import Path
+from functools import lru_cache
 from utils import custom_transform
 from dataset.KITTI_dataset import KITTI
 from model import DeepVIO
-from collections import defaultdict
 from utils.kitti_eval import KITTI_tester
 import numpy as np
 import math
@@ -31,10 +31,11 @@ parser.add_argument('--rnn_hidden_size', type=int, default=1024, help='size of t
 parser.add_argument('--rnn_dropout_out', type=float, default=0.2, help='dropout for the LSTM output layer')
 parser.add_argument('--rnn_dropout_between', type=float, default=0.2, help='dropout within LSTM')
 
-parser.add_argument('--weight_decay', type=float, default=5e-6, help='weight decay for the optimizer')
-parser.add_argument('--batch_size', type=int, default=16, help='batch size')
+parser.add_argument('--weight_decay', type=float, default=1e-4, help='weight decay for the optimizer')
+parser.add_argument('--batch_size', type=int, default=24, help='batch size')
 parser.add_argument('--seq_len', type=int, default=11, help='sequence length for LSTM')
-parser.add_argument('--workers', type=int, default=16, help='number of workers')
+parser.add_argument('--workers', type=int, default=6, help='number of workers')
+parser.add_argument('--optimizer', type=str, default='Adam', help='type of optimizer [Adam, SGD]')
 parser.add_argument('--epochs_warmup', type=int, default=40, help='number of epochs for warmup')
 parser.add_argument('--epochs_joint', type=int, default=40, help='number of epochs for joint training')
 parser.add_argument('--epochs_fine', type=int, default=20, help='number of epochs for finetuning')
@@ -47,17 +48,15 @@ parser.add_argument('--alpha', type=float, default=100, help='weight to balance 
 parser.add_argument('--Lambda', type=float, default=3e-5, help='penalty factor for the visual encoder usage')
 
 parser.add_argument('--experiment_name', type=str, default='flownet_hard_new', help='experiment name')
-parser.add_argument('--optimizer', type=str, default='Adam', help='type of optimizer [Adam, SGD]')
-
 parser.add_argument('--load_cache', default=True, help='whether to load the pickle dataset cache')
 parser.add_argument('--pkl_path', type=str, default='./dataset/kitti.pkl', help='whether to load the pickle dataset cache')
 
-parser.add_argument('--ckpt_model', type=str, default=None, help='path to the checkpoint model')
+parser.add_argument('--ckpt_model', type=str, default='results/train/flownet_hard_new/checkpoints/006.pth', help='path to the checkpoint model')
 parser.add_argument('--flow_encoder',type=str, default='flownet', help='choose to use the flownet or fastflownet')
 parser.add_argument('--pretrain_flownet',type=str, default='pretrain_models/flownets_bn_EPE2.459.pth.tar', help='wehther to use the pre-trained flownet')
+
 parser.add_argument('--hflip', default=False, action='store_true', help='whether to use horizonal flipping as augmentation')
 parser.add_argument('--color', default=False, action='store_true', help='whether to use color augmentations')
-
 parser.add_argument('--print_frequency', type=int, default=10, help='print frequency for loss values')
 parser.add_argument('--weighted', default=False, action='store_true', help='whether to use weighted sum')
 
@@ -66,6 +65,14 @@ args = parser.parse_args()
 # Set the random seed
 torch.manual_seed(args.seed)
 np.random.seed(args.seed)
+
+class ImageCache:
+    def __init__(self, image_cache):
+        self.image_cache = image_cache
+
+    @lru_cache(maxsize=None)
+    def load_image(self, img_path):
+        return self.image_cache[img_path]
 
 def update_status(epoch, args, model):
     # Warmup stage
@@ -99,23 +106,22 @@ def train_epoch(model, optimizer, train_loader, image_cache, selection, temp, lo
     data_len = len(train_loader)
 
     for i, (imgs, imus, gts, rot, weights) in enumerate(train_loader):
+
         if image_cache is not None:
-            all_imgs = []
+            img_arrays = []
             for seq_imgs in imgs:
-                batch_imgs = [image_cache[img_path] for img_path in seq_imgs]   # len(batch): 3, H, W
-                all_imgs.append(torch.stack(batch_imgs, dim=0)) # len(11): batch, 3, H, W
-            imgs = torch.stack(all_imgs, dim=1) # imgs: (batch, seq_len=11, 3, H, W)
-
-
-        imgs = imgs.cuda().float()          # imgs: (batch, seq_len=11, 3, H, W)
-        imus = imus.cuda().float()          # imus: (batch, 101, 6)
-        gts = gts.cuda().float()            # gts:  (batch, 10, 6)
-        weights = weights.cuda().float()    # weights: (batch, 1)
+                batch_imgs = [image_cache.load_image(img_path) for img_path in seq_imgs]   # len(batch): 3, H, W
+                img_arrays.append(torch.stack(batch_imgs, dim=0)) # len(11): batch, 3, H, W
+            imgs = torch.stack(img_arrays, dim=1)            # imgs: (batch, seq_len=11, 3, H, W)
+        
+        imgs = imgs.cuda(non_blocking=True).float()          # imgs: (batch, seq_len=11, 3, H, W)
+        imus = imus.cuda(non_blocking=True).float()          # imus: (batch, 101, 6)
+        gts = gts.cuda(non_blocking=True).float()            # gts:  (batch, 10, 6)
+        weights = weights.cuda(non_blocking=True).float()    # weights: (batch, 1)
 
         optimizer.zero_grad()
-                
         poses, decisions, probs, _ = model(imgs, imus, is_first=True, hc=None, temp=temp, selection=selection, p=p)
-        
+
         if not weighted:
             angle_loss = torch.nn.functional.mse_loss(poses[:,:,:3], gts[:, :, :3])
             translation_loss = torch.nn.functional.mse_loss(poses[:,:,3:], gts[:, :, 3:])
@@ -130,7 +136,7 @@ def train_epoch(model, optimizer, train_loader, image_cache, selection, temp, lo
         
         loss.backward()
         optimizer.step()
-        
+
         if i % args.print_frequency == 0: 
             message = f'Epoch: {ep}, batch: {i}/{data_len}, pose_loss: {pose_loss.item():.6f}, penalty_loss: {penalty_loss.item():.6f}, total loss: {loss.item():.6f}'
             print(message)
@@ -177,12 +183,12 @@ def main():
         transform_train += [custom_transform.RandomColorAug()]
     transform_train = custom_transform.Compose(transform_train)
 
-    image_cache = None
     if args.load_cache:
         # Load the dataset from the .pkl file
         with open(args.pkl_path, 'rb') as f:
-            image_cache = pickle.load(f)
-            
+            kitti_cache = pickle.load(f)
+        image_cache = ImageCache(kitti_cache)
+
     train_dataset = KITTI(
         args.data_dir,
         sequence_length=args.seq_len,
