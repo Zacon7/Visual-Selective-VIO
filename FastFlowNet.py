@@ -5,17 +5,18 @@ import torch.nn.functional as F
 from spatial_correlation_sampler import SpatialCorrelationSampler
 
 
-def convrelu(in_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1, groups=1, bias=True, batch_norm = False, dropout=0):
+def convrelu(in_channels, out_channels, kernel_size=3, stride=1, padding=1,
+             dilation=1, groups=1, bias=True, batch_norm=False, dropout=0):
     if batch_norm:
         return nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias=bias), 
+            nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias=bias),
             nn.BatchNorm2d(out_channels),
             nn.LeakyReLU(0.1, inplace=True),
             nn.Dropout(dropout)
         )
     else:
         return nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias=bias), 
+            nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias=bias),
             nn.LeakyReLU(0.1, inplace=True),
             nn.Dropout(dropout)
         )
@@ -60,5 +61,5 @@ class FastFlowNet(nn.Module):
 
         f_concat = torch.cat([f16, f26], dim=1)     # (batch, 128, 4, 8)
         f = self.dw_conv(f_concat)                  # (batch, 256, 4, 8)
-        
+
         return f

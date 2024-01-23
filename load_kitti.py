@@ -11,6 +11,7 @@ import pickle
 import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor
 
+
 class KITTI(Dataset):
     def __init__(
         self,
@@ -58,6 +59,7 @@ class KITTI(Dataset):
     def transform_image(self, img_path, img):
         self.image_cache[img_path] = self.transform(img)
 
+
 if __name__ == "__main__":
     transform_train = transforms.Compose([
         transforms.ToTensor(),
@@ -70,7 +72,7 @@ if __name__ == "__main__":
     #     custom_transform.Resize((256, 512)),
     # ]
     # transform_train = custom_transform.Compose(transform_train)
-    
+
     train_dataset = KITTI(
         data_root="./data", sequence_length=11, transform=transform_train
     )

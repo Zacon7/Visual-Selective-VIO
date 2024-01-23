@@ -6,22 +6,27 @@ import numpy as np
 import torch.nn.functional as F
 from FastFlowNet import FastFlowNet
 
+
 def conv(batchNorm, in_planes, out_planes, kernel_size=3, stride=1, dropout=0):
     if batchNorm:
         return nn.Sequential(
-            nn.Conv2d(in_planes, out_planes, kernel_size=kernel_size, stride=stride, padding=(kernel_size - 1) // 2, bias=False),
+            nn.Conv2d(in_planes, out_planes, kernel_size=kernel_size,
+                      stride=stride, padding=(kernel_size - 1) // 2, bias=False),
             nn.BatchNorm2d(out_planes),
             nn.LeakyReLU(0.1, inplace=True),
             nn.Dropout(dropout)  # , inplace=True)
         )
     else:
         return nn.Sequential(
-            nn.Conv2d(in_planes, out_planes, kernel_size=kernel_size, stride=stride, padding=(kernel_size - 1) // 2, bias=True),
+            nn.Conv2d(in_planes, out_planes, kernel_size=kernel_size,
+                      stride=stride, padding=(kernel_size - 1) // 2, bias=True),
             nn.LeakyReLU(0.1, inplace=True),
             nn.Dropout(dropout)  # , inplace=True)
         )
 
 # The inertial encoder for raw imu data
+
+
 class InertialEncoder(nn.Module):
     def __init__(self, opt):
         super(InertialEncoder, self).__init__()
@@ -56,6 +61,7 @@ class InertialEncoder(nn.Module):
         out = self.proj(fi.view(fi.shape[0], -1))                   # out: (batch *seq_len=10, 256)
         return out.view(batch_size, seq_len, 256)                   # out: (batch, seq_len=10, 256)
 
+
 class Encoder(nn.Module):
     def __init__(self, opt):
         super(Encoder, self).__init__()
@@ -88,7 +94,7 @@ class Encoder(nn.Module):
         self.inertial_encoder = InertialEncoder(opt)
 
     def forward(self, imgs, imus):
-        ''' 
+        '''
         input:
             imgs: (batch, seq_len=11, 3, H, W)
             imus: (batch, 101, 6)
@@ -111,7 +117,8 @@ class Encoder(nn.Module):
         fv = self.visual_head(fv)                 # fv: (batch, seq_len=10, v_f_len=512)
 
         # feed imus into IMU Encoder
-        fi = torch.cat([imus[:, i * 10:i * 10 + 11, :].unsqueeze(1) for i in range(10)], dim=1) # fi: (batch, seq_len=10, 11, 6)
+        fi = torch.cat([imus[:, i * 10:i * 10 + 11, :].unsqueeze(1)
+                       for i in range(10)], dim=1)  # fi: (batch, seq_len=10, 11, 6)
         fi = self.inertial_encoder(fi)
 
         return fv, fi
@@ -155,6 +162,8 @@ class FusionModule(nn.Module):
             return feat_cat * mask[:, :, :, 0]
 
 # The policy network module
+
+
 class PolicyNet(nn.Module):
     def __init__(self, opt):
         super(PolicyNet, self).__init__()
@@ -175,6 +184,8 @@ class PolicyNet(nn.Module):
         return logits, hard_mask
 
 # The pose estimation network
+
+
 class PoseRNN(nn.Module):
     def __init__(self, opt):
         super(PoseRNN, self).__init__()
@@ -202,11 +213,11 @@ class PoseRNN(nn.Module):
     def forward(self, fv, fv_alter, fi, dec, prev=None):
         if prev is not None:
             prev = (prev[0].transpose(1, 0).contiguous(), prev[1].transpose(1, 0).contiguous())
-        
+
         # Select between fv and fv_alter
         v_in = fv * dec[:, :, :1] + fv_alter * dec[:, :, -1:] if fv_alter is not None else fv
         fused = self.fuse(v_in, fi)
-        
+
         # hc is a tuple that contains hidden state(hc[0]) and cell state(hc[1])
         # both two state have shape of (num_layers * num_directions, batch_size, hidden_size)
         out, hc = self.rnn(fused) if prev is None else self.rnn(fused, prev)
@@ -217,6 +228,7 @@ class PoseRNN(nn.Module):
         hc = (hc[0].transpose(1, 0).contiguous(), hc[1].transpose(1, 0).contiguous())
         return pose, hc
 
+
 class DeepVIO(nn.Module):
     def __init__(self, opt):
         super(DeepVIO, self).__init__()
@@ -225,7 +237,7 @@ class DeepVIO(nn.Module):
         self.Pose_net = PoseRNN(opt)
         self.Policy_net = PolicyNet(opt)
         self.opt = opt
-        
+
         initialization(self)
 
     def forward(self, imgs, imus, is_first=True, hc=None, temp=5, selection='gumbel-softmax', p=0.2):
@@ -234,14 +246,15 @@ class DeepVIO(nn.Module):
         batch_size = fv.shape[0]
         seq_len = fv.shape[1]
 
-        poses, decisions, logits= [], [], []
-        hidden = torch.zeros(batch_size, self.opt.rnn_hidden_size).to(fv.device) if hc is None else hc[0].contiguous()[:, -1, :]
-        fv_alter = torch.zeros_like(fv) # zero padding in the paper, can be replaced by other 
-        
+        poses, decisions, logits = [], [], []
+        hidden = torch.zeros(batch_size, self.opt.rnn_hidden_size).to(
+            fv.device) if hc is None else hc[0].contiguous()[:, -1, :]
+        fv_alter = torch.zeros_like(fv)  # zero padding in the paper, can be replaced by other
+
         for i in range(seq_len):
             if i == 0 and is_first:
                 # The first relative pose is estimated by both images and imu by default
-                pose, hc = self.Pose_net(fv[:, i:i+1, :], None, fi[:, i:i+1, :], None, hc)
+                pose, hc = self.Pose_net(fv[:, i:i + 1, :], None, fi[:, i:i + 1, :], None, hc)
             else:
                 if selection == 'gumbel-softmax':
                     # Otherwise, sample the decision from the policy network
@@ -249,19 +262,30 @@ class DeepVIO(nn.Module):
                     logit, decision = self.Policy_net(p_in.detach(), temp)
                     decision = decision.unsqueeze(1)
                     logit = logit.unsqueeze(1)
-                    pose, hc = self.Pose_net(fv[:, i:i+1, :], fv_alter[:, i:i+1, :], fi[:, i:i+1, :], decision, hc)
+                    pose, hc = self.Pose_net(
+                        fv[:, i: i + 1, :],
+                        fv_alter[:, i: i + 1, :],
+                        fi[:, i: i + 1, :],
+                        decision, hc)
                     decisions.append(decision)
                     logits.append(logit)
+
                 elif selection == 'random':
                     decision = (torch.rand(fv.shape[0], 1, 2) < p).float()
-                    decision[:,:,1] = 1-decision[:,:,0]
+                    decision[:, :, 1] = 1 - decision[:, :, 0]
                     decision = decision.to(fv.device)
-                    logit = 0.5*torch.ones((fv.shape[0], 1, 2)).to(fv.device)
-                    pose, hc = self.Pose_net(fv[:, i:i+1, :], fv_alter[:, i:i+1, :], fi[:, i:i+1, :], decision, hc)
+                    logit = 0.5 * torch.ones((fv.shape[0], 1, 2)).to(fv.device)
+                    pose, hc = self.Pose_net(
+                        fv[:, i: i + 1, :],
+                        fv_alter[:, i: i + 1, :],
+                        fi[:, i: i + 1, :],
+                        decision, hc)
                     decisions.append(decision)
                     logits.append(logit)
+
             poses.append(pose)
-            hidden = hc[0].contiguous()[:, -1, :]   # The purpose of hc[0][:, -1,:] is to select the hidden state of the last layer for each sample. 
+            # The purpose of hc[0][:, -1,:] is to select the hidden state of the last layer for each sample.
+            hidden = hc[0].contiguous()[:, -1, :]
 
         poses = torch.cat(poses, dim=1)
         decisions = torch.cat(decisions, dim=1)
@@ -272,9 +296,10 @@ class DeepVIO(nn.Module):
 
 
 def initialization(net):
-    #Initilization
+    # Initilization
     for m in net.modules():
-        if isinstance(m, nn.Conv2d) or isinstance(m, nn.Conv1d) or isinstance(m, nn.ConvTranspose2d) or isinstance(m, nn.Linear):
+        if isinstance(m, nn.Conv2d) or isinstance(m, nn.Conv1d) or \
+                isinstance(m, nn.ConvTranspose2d) or isinstance(m, nn.Linear):
             kaiming_normal_(m.weight.data)
             if m.bias is not None:
                 m.bias.data.zero_()
@@ -289,7 +314,7 @@ def initialization(net):
                 elif 'bias_hh' in name:
                     param.data.fill_(0)
                     n = param.size(0)
-                    start, end = n//4, n//2
+                    start, end = n // 4, n // 2
                     param.data[start:end].fill_(1.)
         elif isinstance(m, nn.BatchNorm2d) or isinstance(m, nn.BatchNorm1d):
             m.weight.data.fill_(1)

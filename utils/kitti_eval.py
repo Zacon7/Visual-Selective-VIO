@@ -9,7 +9,8 @@ import torchvision.transforms.functional as TF
 import matplotlib.pyplot as plt
 import math
 from utils.utils import *
-from tqdm import tqdm 
+from tqdm import tqdm
+
 
 class data_partition():
     def __init__(self, opt, folder):
@@ -63,28 +64,28 @@ class data_partition():
 class KITTI_tester():
     def __init__(self, args):
         super(KITTI_tester, self).__init__()
-        
+
         # generate data loader for each path
         self.dataloader = []
         for seq in args.val_seq:
             self.dataloader.append(data_partition(args, seq))
 
         self.args = args
-    
+
     def test_one_path(self, net, df, selection, num_gpu=1, p=0.5):
         hc = None
-        pose_list, decision_list, probs_list= [], [], []
-        for i, (image_seq, imu_seq, gt_seq) in tqdm(enumerate(df), total=len(df), smoothing=0.9):  
-            x_in = image_seq.unsqueeze(0).repeat(num_gpu,1,1,1,1).cuda()
-            i_in = imu_seq.unsqueeze(0).repeat(num_gpu,1,1).cuda()
+        pose_list, decision_list, probs_list = [], [], []
+        for i, (image_seq, imu_seq, gt_seq) in tqdm(enumerate(df), total=len(df), smoothing=0.9):
+            x_in = image_seq.unsqueeze(0).repeat(num_gpu, 1, 1, 1, 1).cuda()
+            i_in = imu_seq.unsqueeze(0).repeat(num_gpu, 1, 1).cuda()
             with torch.no_grad():
-                pose, decision, probs, hc = net(x_in, i_in, is_first=(i==0), hc=hc, selection=selection, p=p)
-            pose_list.append(pose[0,:,:].detach().cpu().numpy())
-            decision_list.append(decision[0,:,:].detach().cpu().numpy()[:, 0])
-            probs_list.append(probs[0,:,:].detach().cpu().numpy())
+                pose, decision, probs, hc = net(x_in, i_in, is_first=(i == 0), hc=hc, selection=selection, p=p)
+            pose_list.append(pose[0, :, :].detach().cpu().numpy())
+            decision_list.append(decision[0, :, :].detach().cpu().numpy()[:, 0])
+            probs_list.append(probs[0, :, :].detach().cpu().numpy())
         pose_est = np.vstack(pose_list)
         dec_est = np.hstack(decision_list)
-        prob_est = np.vstack(probs_list)        
+        prob_est = np.vstack(probs_list)
         return pose_est, dec_est, prob_est
 
     def eval(self, net, selection, num_gpu=1, p=0.5):
@@ -92,36 +93,38 @@ class KITTI_tester():
         self.est = []
         for i, seq in enumerate(self.args.val_seq):
             print(f'testing sequence {seq}')
-            pose_est, dec_est, prob_est = self.test_one_path(net, self.dataloader[i], selection, num_gpu=num_gpu, p=p)            
-            pose_est_global, pose_gt_global, t_rel, r_rel, t_rmse, r_rmse, usage, speed = kitti_eval(pose_est, dec_est, self.dataloader[i].poses_rel)
-            
-            self.est.append({'pose_est_global':pose_est_global, 'pose_gt_global':pose_gt_global, 'decs':dec_est, 'probs':prob_est, 'speed':speed})
-            self.errors.append({'t_rel':t_rel, 'r_rel':r_rel, 't_rmse':t_rmse, 'r_rmse':r_rmse, 'usage':usage})
-            
+            pose_est, dec_est, prob_est = self.test_one_path(net, self.dataloader[i], selection, num_gpu=num_gpu, p=p)
+            pose_est_global, pose_gt_global, t_rel, r_rel, t_rmse, r_rmse, usage, speed = kitti_eval(
+                pose_est, dec_est, self.dataloader[i].poses_rel)
+
+            self.est.append({'pose_est_global': pose_est_global, 'pose_gt_global': pose_gt_global,
+                            'decs': dec_est, 'probs': prob_est, 'speed': speed})
+            self.errors.append({'t_rel': t_rel, 'r_rel': r_rel, 't_rmse': t_rmse, 'r_rmse': r_rmse, 'usage': usage})
+
         return self.errors
 
     def generate_plots(self, save_dir, window_size):
         for i, seq in enumerate(self.args.val_seq):
-            plotPath_2D(seq, 
-                        self.est[i]['pose_gt_global'], 
-                        self.est[i]['pose_est_global'], 
-                        save_dir, 
-                        self.est[i]['decs'], 
-                        self.est[i]['speed'], 
+            plotPath_2D(seq,
+                        self.est[i]['pose_gt_global'],
+                        self.est[i]['pose_est_global'],
+                        save_dir,
+                        self.est[i]['decs'],
+                        self.est[i]['speed'],
                         window_size)
-    
+
     def save_text(self, save_dir):
         for i, seq in enumerate(self.args.val_seq):
-            path = save_dir/'{}_pred.txt'.format(seq)
+            path = save_dir / '{}_pred.txt'.format(seq)
             saveSequence(self.est[i]['pose_est_global'], path)
             print('Seq {} saved'.format(seq))
 
 
 def kitti_eval(pose_est, dec_est, pose_gt):
-    
+
     # First decision is always true
     dec_est = np.insert(dec_est, 0, 1)
-    
+
     # Calculate the translational and rotational RMSE
     t_rmse, r_rmse = rmse_err_cal(pose_est, pose_gt)
 
@@ -131,13 +134,14 @@ def kitti_eval(pose_est, dec_est, pose_gt):
 
     # Using KITTI metric
     err_list, t_rel, r_rel, speed = kitti_err_cal(pose_est_mat, pose_gt_mat)
-    
+
     t_rel = t_rel * 100
     r_rel = r_rel / np.pi * 180 * 100
     r_rmse = r_rmse / np.pi * 180
     usage = np.mean(dec_est) * 100
 
     return pose_est_mat, pose_gt_mat, t_rel, r_rel, t_rmse, r_rmse, usage, speed
+
 
 def kitti_err_cal(pose_est_mat, pose_gt_mat):
 
@@ -168,8 +172,9 @@ def kitti_err_cal(pose_est_mat, pose_gt_mat):
     t_rel, r_rel = computeOverallErr(err)
     return err, t_rel, r_rel, np.asarray(speed)
 
+
 def plotPath_2D(seq, poses_gt_mat, poses_est_mat, plot_path_dir, decision, speed, window_size):
-    
+
     # Apply smoothing to the decision
     decision = np.insert(decision, 0, 1)
     decision = moving_average(decision, window_size)
@@ -263,8 +268,3 @@ def plotPath_2D(seq, poses_gt_mat, poses_est_mat, plot_path_dir, decision, speed
     png_title = "{}_speed".format(seq)
     plt.savefig(plot_path_dir + "/" + png_title + ".png", bbox_inches='tight', pad_inches=0.1)
     plt.close()
-
-
-
-
-

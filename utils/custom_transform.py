@@ -4,6 +4,7 @@ import random
 import numpy as np
 import torchvision.transforms.functional as F
 
+
 class Compose(object):
     def __init__(self, transforms):
         self.transforms = transforms
@@ -12,6 +13,7 @@ class Compose(object):
         for t in self.transforms:
             images = t(images)
         return images
+
     def __repr__(self):
         format_string = self.__class__.__name__ + '('
         for t in self.transforms:
@@ -20,12 +22,14 @@ class Compose(object):
         format_string += '\n)'
         return format_string
 
+
 class SubtractFloat(object):
     def __init__(self, value):
         self.value = value
 
     def __call__(self, x):
         return x - self.value
+
 
 class Normalize(object):
     def __init__(self, mean, std):
@@ -37,19 +41,23 @@ class Normalize(object):
             for t, m, s in zip(tensor, self.mean, self.std):
                 t.sub_(m).div_(s)
         return images
+
     def __repr__(self):
         format_string = self.__class__.__name__ + '('
         format_string += 'mean: {}, '.format(self.mean)
         format_string += 'std: {})\n'.format(self.std)
         return format_string
 
+
 class ToTensor(object):
     def __call__(self, images):
         tensors = [F.to_tensor(im) - 0.5 for im in images]
         tensors = torch.stack(tensors, 0)
         return tensors
+
     def __repr__(self):
         return self.__class__.__name__ + '()'
+
 
 class Resize(object):
     def __init__(self, size=(256, 512)):
@@ -59,13 +67,17 @@ class Resize(object):
         tensors = [F.resize(im, size=self.size) for im in images]
         tensors = torch.stack(tensors, 0)
         return tensors
+
     def __repr__(self):
         return f"{self.__class__.__name__}(img_h: {self.size[0]}, img_w: {self.size[1]})"
 
+
 class RandomHorizontalFlip(object):
     """Randomly horizontally flips the given numpy array with a probability of 0.5"""
+
     def __init__(self, p=0.5):
         self.p = p
+
     def __call__(self, images, imus, gts):
         if random.random() < self.p:
             tensors = [F.hflip(im) for im in images]
@@ -76,10 +88,12 @@ class RandomHorizontalFlip(object):
         else:
             tensors = images
         return tensors, imus, gts
+
     def __repr__(self):
         format_string = self.__class__.__name__ + '('
         format_string += 'p: {})'.format(self.p)
         return format_string
+
 
 class RandomColorAug(object):
     def __init__(self, augment_parameters=[0.8, 1.2, 0.5, 2.0, 0.8, 1.2], p=0.5):
@@ -90,23 +104,24 @@ class RandomColorAug(object):
         self.color_low = augment_parameters[4]  # 0.8
         self.color_high = augment_parameters[5]  # 1.2
         self.p = p
+
     def __call__(self, images):
         if random.random() < self.p:
             images = images + 0.5
             random_gamma = np.random.uniform(self.gamma_low, self.gamma_high)
             random_brightness = np.random.uniform(self.brightness_low, self.brightness_high)
             random_colors = np.random.uniform(self.color_low, self.color_high, 3)
-            
+
             # randomly shift gamma
             img_aug = images ** random_gamma
-            
+
             # randomly shift brightness
             img_aug = img_aug * random_brightness
-            
+
             # randomly shift color
             for i in range(3):
                 img_aug[:, i, :, :] *= random_colors[i]
-            
+
             # saturate
             img_aug = torch.clamp(img_aug, 0, 1) - 0.5
 
@@ -114,6 +129,7 @@ class RandomColorAug(object):
             img_aug = images
 
         return img_aug
+
     def __repr__(self):
         format_string = self.__class__.__name__ + '('
         format_string += 'gamma: {}-{}, '.format(self.gamma_low, self.gamma_high)

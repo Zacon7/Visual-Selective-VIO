@@ -3,6 +3,8 @@ import torch
 from torch.autograd import Variable
 
 # -----------------------------Softmax-Random Choice-----------------------------
+
+
 def onehot_from_logits(logits, eps=0.5):
     """
     Given batch of logits, return one-hot sample using epsilon greedy strategy

@@ -12,6 +12,7 @@ plt.switch_backend('agg')
 
 _EPS = np.finfo(float).eps * 4.0
 
+
 def isRotationMatrix(R):
     '''
     check whether a matrix is a qualified rotation metrix
@@ -21,6 +22,7 @@ def isRotationMatrix(R):
     I = np.identity(3, dtype=R.dtype)
     n = np.linalg.norm(I - shouldBeIdentity)
     return n < 1e-6
+
 
 def euler_from_matrix(matrix):
     '''
@@ -40,6 +42,7 @@ def euler_from_matrix(matrix):
         az = math.atan2(M[1, 0], M[0, 0])
     return np.array([ax, ay, az])
 
+
 def get_relative_pose(Rt1, Rt2):
     '''
     Calculate the relative 4x4 pose matrix between two pose matrices
@@ -48,11 +51,12 @@ def get_relative_pose(Rt1, Rt2):
     Rt_rel = Rt1_inv @ Rt2
     return Rt_rel
 
+
 def get_relative_pose_6DoF(Rt1, Rt2):
     '''
-    Calculate the relative rotation and translation from two consecutive pose matrices 
+    Calculate the relative rotation and translation from two consecutive pose matrices
     '''
-    
+
     # Calculate the relative transformation Rt_rel
     Rt_rel = get_relative_pose(Rt1, Rt2)
 
@@ -66,6 +70,7 @@ def get_relative_pose_6DoF(Rt1, Rt2):
     pose_rel = np.concatenate((theta, t_rel))
     return pose_rel
 
+
 def rotationError(Rt1, Rt2):
     '''
     Calculate the rotation difference between two pose matrices
@@ -77,6 +82,7 @@ def rotationError(Rt1, Rt2):
     d = 0.5 * (a + b + c - 1.0)
     return np.arccos(max(min(d, 1.0), -1.0))
 
+
 def translationError(Rt1, Rt2):
     '''
     Calculate the translational difference between two pose matrices
@@ -86,6 +92,7 @@ def translationError(Rt1, Rt2):
     dy = pose_error[1, 3]
     dz = pose_error[2, 3]
     return np.sqrt(dx**2 + dy**2 + dz**2)
+
 
 def eulerAnglesToRotationMatrix(theta):
     '''
@@ -106,15 +113,17 @@ def eulerAnglesToRotationMatrix(theta):
     R = np.dot(R_z, np.dot(R_y, R_x))
     return R
 
+
 def normalize_angle_delta(angle):
     '''
     Normalization angles to constrain that it is between -pi and pi
     '''
-    if(angle > np.pi):
+    if (angle > np.pi):
         angle = angle - 2 * np.pi
-    elif(angle < -np.pi):
+    elif (angle < -np.pi):
         angle = 2 * np.pi + angle
     return angle
+
 
 def pose_6DoF_to_matrix(pose):
     '''
@@ -126,12 +135,14 @@ def pose_6DoF_to_matrix(pose):
     R = np.concatenate((R, np.array([[0, 0, 0, 1]])), 0)
     return R
 
+
 def pose_accu(Rt_pre, R_rel):
     '''
     Calculate the accumulated pose from the latest pose and the relative rotation and translation
     '''
     Rt_rel = pose_6DoF_to_matrix(R_rel)
     return Rt_pre @ Rt_rel
+
 
 def path_accu(pose):
     '''
@@ -143,8 +154,10 @@ def path_accu(pose):
         answer.append(pose_)
     return answer
 
+
 def moving_average(x, w):
     return np.convolve(x, np.ones(w), 'same') / w
+
 
 def rmse_err_cal(pose_est, pose_gt):
     '''
@@ -153,6 +166,7 @@ def rmse_err_cal(pose_est, pose_gt):
     t_rmse = np.sqrt(np.mean(np.sum((pose_est[:, 3:] - pose_gt[:, 3:])**2, -1)))
     r_rmse = np.sqrt(np.mean(np.sum((pose_est[:, :3] - pose_gt[:, :3])**2, -1)))
     return t_rmse, r_rmse
+
 
 def trajectoryDistances(poses):
     '''
@@ -172,11 +186,13 @@ def trajectoryDistances(poses):
         speed.append(np.sqrt(dx**2 + dy**2 + dz**2) * 10)
     return dist, speed
 
+
 def lastFrameFromSegmentLength(dist, first_frame, len_):
     for i in range(first_frame, len(dist), 1):
         if dist[i] > (dist[first_frame] + len_):
             return i
     return -1
+
 
 def computeOverallErr(seq_err):
     t_err = 0
@@ -190,31 +206,34 @@ def computeOverallErr(seq_err):
     ave_r_err = r_err / seq_len
     return ave_t_err, ave_r_err
 
+
 def read_pose(line):
     '''
     Reading 4x4 pose matrix from .txt files
     input: a line of 12 parameters
     output: 4x4 numpy matrix
     '''
-    values= np.reshape(np.array([float(value) for value in line.split(' ')]), (3, 4))
+    values = np.reshape(np.array([float(value) for value in line.split(' ')]), (3, 4))
     Rt = np.concatenate((values, np.array([[0, 0, 0, 1]])), 0)
     return Rt
-    
+
+
 def read_pose_from_text(path):
     with open(path) as f:
         lines = [line.split('\n')[0] for line in f.readlines()]
         poses_rel, poses_abs = [], []
         values_p = read_pose(lines[0])
-        poses_abs.append(values_p)            
+        poses_abs.append(values_p)
         for i in range(1, len(lines)):
             values = read_pose(lines[i])
-            poses_rel.append(get_relative_pose_6DoF(values_p, values)) 
+            poses_rel.append(get_relative_pose_6DoF(values_p, values))
             values_p = values.copy()
-            poses_abs.append(values) 
+            poses_abs.append(values)
         poses_abs = np.array(poses_abs)
         poses_rel = np.array(poses_rel)
-        
+
     return poses_abs, poses_rel
+
 
 def saveSequence(poses, file_name):
     with open(file_name, 'w') as f:
