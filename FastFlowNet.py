@@ -35,7 +35,7 @@ class FastFlowNet(nn.Module):
         self.pconv3_2 = convrelu(64, 64, kernel_size=3, stride=1)
         self.pconv3_3 = convrelu(64, 64, kernel_size=3, stride=1)
 
-        self.dw_conv = convrelu(128, 256, kernel_size=1, stride=1, batch_norm=True)
+        self.dw_conv = convrelu(128, 128, kernel_size=1, stride=1)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -60,6 +60,6 @@ class FastFlowNet(nn.Module):
         f26 = F.avg_pool2d(f25, kernel_size=(2, 2), stride=(2, 2))      # (batch, 64, 4, 8)
 
         f_concat = torch.cat([f16, f26], dim=1)     # (batch, 128, 4, 8)
-        f = self.dw_conv(f_concat)                  # (batch, 256, 4, 8)
+        f = self.dw_conv(f_concat)                  # (batch, 128, 4, 8)
 
         return f

@@ -19,7 +19,7 @@ parser.add_argument('--save_dir', type=str, default='./results', help='path to s
 parser.add_argument('--train_seq', type=list, default=['00', '01', '02', '04', '06', '08', '09'],
                     help='sequences for training')
 parser.add_argument('--val_seq', type=list, default=['05', '07', '10'], help='sequences for validation')
-parser.add_argument('--seed', type=int, default=0, help='random seed')
+parser.add_argument('--seed', type=int, default=3407, help='random seed')
 
 parser.add_argument('--img_h', type=int, default=256, help='image height')
 parser.add_argument('--img_w', type=int, default=512, help='image width')
@@ -48,15 +48,15 @@ parser.add_argument('--temp_init', type=float, default=5, help='initial temperat
 parser.add_argument('--alpha', type=float, default=100, help='weight to balance translational & rotational loss.')
 parser.add_argument('--Lambda', type=float, default=3e-5, help='penalty factor for the visual encoder usage')
 
-parser.add_argument('--experiment_name', type=str, default='flownet_hard_new', help='experiment name')
-parser.add_argument('--load_cache', default=True, help='whether to load the pickle dataset cache')
-parser.add_argument('--pkl_path', type=str, default='./dataset/kitti.pkl', help='path to load the pkl dataset cache')
+parser.add_argument('--experiment_name', type=str, default='fastflow_hard_dwconv128', help='experiment name')
+parser.add_argument('--load_cache', default=False, help='whether to load the dataset pickle cache')
+parser.add_argument('--pkl_path', type=str, default='./dataset/kitti.pkl', help='path to load the dataset pickle cache')
 
-parser.add_argument('--ckpt_model', type=str, default='results/train/flownet_hard_new/checkpoints/006.pth',
-                    help='path to the checkpoint model')
-parser.add_argument('--flow_encoder', type=str, default='flownet', help='choose to use the flownet or fastflownet')
-parser.add_argument('--pretrain_flownet', type=str, default='pretrain_models/flownets_bn_EPE2.459.pth.tar',
-                    help='wehther to use the pre-trained flownet')
+parser.add_argument('--ckpt_model', type=str, default=None, help='path to load the checkpoint')
+parser.add_argument('--flow_encoder', type=str, default='fastflownet', help='choose to use the flownet or fastflownet')
+parser.add_argument('--flownetBN', default=True, help='choose to use the flownetS or flownetS_BN')
+parser.add_argument('--pretrain_flownet', type=str, default='pretrain_models/fastflownet_ft_mix.pth',
+                    help='path to load pretrained flownet model')
 
 parser.add_argument('--hflip', default=False, action='store_true',
                     help='whether to use horizonal flipping augmentation')
@@ -190,6 +190,7 @@ def main():
         transform_train += [custom_transform.RandomColorAug()]
     transform_train = custom_transform.Compose(transform_train)
 
+    image_cache = None
     if args.load_cache:
         # Load the dataset from the .pkl file
         with open(args.pkl_path, 'rb') as f:
@@ -302,8 +303,8 @@ def main():
                 best = t_rel
                 torch.save(model.module.state_dict(), f'{checkpoints_dir}/best_{best:.2f}.pth')
 
-            message = f'Epoch {epoch} evaluation finished, 
-                        t_rel: {t_rel:.4f}, r_rel: {r_rel:.4f}, t_rmse: {t_rmse:.4f}, 
+            message = f'Epoch {epoch} evaluation finished, \
+                        t_rel: {t_rel:.4f}, r_rel: {r_rel:.4f}, t_rmse: {t_rmse:.4f}, \
                         r_rmse: {r_rmse:.4f}, usage: {usage:.4f}, best t_rel: {best:.4f}'
             logger.info(message)
             print(message)

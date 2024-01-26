@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from FastFlowNet import FastFlowNet
 
 
-def conv(batchNorm, in_planes, out_planes, kernel_size=3, stride=1, dropout=0):
+def conv(in_planes, out_planes, kernel_size=3, stride=1, dropout=0, batchNorm=True):
     if batchNorm:
         return nn.Sequential(
             nn.Conv2d(in_planes, out_planes, kernel_size=kernel_size,
@@ -67,17 +67,17 @@ class Encoder(nn.Module):
         super(Encoder, self).__init__()
         self.opt = opt
 
-        # define the Flow Encoder based on opt.flow_encoder
+        # define the OpticalFlow-Encoder based on opt.flow_encoder (flownet or fastflownet)
         if self.opt.flow_encoder == 'flownet':
-            self.conv1 = conv(True, 6, 64, kernel_size=7, stride=2, dropout=0.2)
-            self.conv2 = conv(True, 64, 128, kernel_size=5, stride=2, dropout=0.2)
-            self.conv3 = conv(True, 128, 256, kernel_size=5, stride=2, dropout=0.2)
-            self.conv3_1 = conv(True, 256, 256, kernel_size=3, stride=1, dropout=0.2)
-            self.conv4 = conv(True, 256, 512, kernel_size=3, stride=2, dropout=0.2)
-            self.conv4_1 = conv(True, 512, 512, kernel_size=3, stride=1, dropout=0.2)
-            self.conv5 = conv(True, 512, 512, kernel_size=3, stride=2, dropout=0.2)
-            self.conv5_1 = conv(True, 512, 512, kernel_size=3, stride=1, dropout=0.2)
-            self.conv6 = conv(True, 512, 1024, kernel_size=3, stride=2, dropout=0.5)
+            self.conv1 = conv(6, 64, kernel_size=7, stride=2, dropout=0.2, batchNorm=opt.flownetBN)
+            self.conv2 = conv(64, 128, kernel_size=5, stride=2, dropout=0.2, batchNorm=opt.flownetBN)
+            self.conv3 = conv(128, 256, kernel_size=5, stride=2, dropout=0.2, batchNorm=opt.flownetBN)
+            self.conv3_1 = conv(256, 256, kernel_size=3, stride=1, dropout=0.2, batchNorm=opt.flownetBN)
+            self.conv4 = conv(256, 512, kernel_size=3, stride=2, dropout=0.2, batchNorm=opt.flownetBN)
+            self.conv4_1 = conv(512, 512, kernel_size=3, stride=1, dropout=0.2, batchNorm=opt.flownetBN)
+            self.conv5 = conv(512, 512, kernel_size=3, stride=2, dropout=0.2, batchNorm=opt.flownetBN)
+            self.conv5_1 = conv(512, 512, kernel_size=3, stride=1, dropout=0.2, batchNorm=opt.flownetBN)
+            self.conv6 = conv(512, 1024, kernel_size=3, stride=2, dropout=0.5, batchNorm=opt.flownetBN)
 
             __tmp = Variable(torch.zeros(1, 6, opt.img_h, opt.img_w))
             __tmp = self.flownet(__tmp)
