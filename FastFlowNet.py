@@ -17,11 +17,19 @@ class Correlation(nn.Module):
         return self.corr(x, y).view(b, -1, h, w) / c
 
 
-def convrelu(in_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1, groups=1, bias=True):
-    return nn.Sequential(
-        nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias=bias),
-        nn.LeakyReLU(0.1, inplace=True)
-    )
+def convrelu(in_channels, out_channels, kernel_size=3, stride=1,
+             padding=1, dilation=1, groups=1, bias=True, batch_norm=False):
+    if batch_norm:
+        return nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias=bias),
+            nn.BatchNorm2d(out_channels),
+            nn.LeakyReLU(0.1, inplace=True)
+        )
+    else:
+        return nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias=bias),
+            nn.LeakyReLU(0.1, inplace=True)
+        )
 
 
 class Decoder(nn.Module):
@@ -85,7 +93,7 @@ class FastFlowNet(nn.Module):
         self.rconv6 = convrelu(64, 32, 3, 1)
         self.decoder6 = Decoder(87, groups)
 
-        # self.dw_conv = convrelu(128, 256, kernel_size=1, stride=1, batch_norm=True)
+        # self.dw_conv = convrelu(96, 128, kernel_size=1, stride=1, batch_norm=True)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
