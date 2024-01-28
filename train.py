@@ -33,7 +33,7 @@ parser.add_argument('--rnn_dropout_out', type=float, default=0.2, help='dropout 
 parser.add_argument('--rnn_dropout_between', type=float, default=0.2, help='dropout within LSTM')
 
 parser.add_argument('--weight_decay', type=float, default=1e-4, help='weight decay for the optimizer')
-parser.add_argument('--batch_size', type=int, default=24, help='batch size')
+parser.add_argument('--batch_size', type=int, default=32, help='batch size')
 parser.add_argument('--seq_len', type=int, default=11, help='sequence length for LSTM')
 parser.add_argument('--workers', type=int, default=6, help='number of workers')
 parser.add_argument('--optimizer', type=str, default='Adam', help='type of optimizer [Adam, SGD]')
@@ -48,8 +48,8 @@ parser.add_argument('--temp_init', type=float, default=5, help='initial temperat
 parser.add_argument('--alpha', type=float, default=100, help='weight to balance translational & rotational loss.')
 parser.add_argument('--Lambda', type=float, default=3e-5, help='penalty factor for the visual encoder usage')
 
-parser.add_argument('--experiment_name', type=str, default='fastflow_hard_dwconv128', help='experiment name')
-parser.add_argument('--load_cache', default=False, help='whether to load the dataset pickle cache')
+parser.add_argument('--experiment_name', type=str, default='fastflow_hard_flow6', help='experiment name')
+parser.add_argument('--load_cache', default=True, help='whether to load the dataset pickle cache')
 parser.add_argument('--pkl_path', type=str, default='./dataset/kitti.pkl', help='path to load the dataset pickle cache')
 
 parser.add_argument('--ckpt_model', type=str, default=None, help='path to load the checkpoint')
@@ -118,8 +118,8 @@ def train_epoch(model, optimizer, train_loader, image_cache, selection, temp, lo
             img_arrays = []
             for seq_imgs in imgs:
                 batch_imgs = [image_cache.load_image(img_path) for img_path in seq_imgs]   # len(batch): 3, H, W
-                img_arrays.append(torch.stack(batch_imgs, dim=0))  # len(11): batch, 3, H, W
-            imgs = torch.stack(img_arrays, dim=1)            # imgs: (batch, seq_len=11, 3, H, W)
+                img_arrays.append(torch.stack(batch_imgs, dim=0))   # len(11): batch, 3, H, W
+            imgs = torch.stack(img_arrays, dim=1)
 
         imgs = imgs.cuda(non_blocking=True).float()          # imgs: (batch, seq_len=11, 3, H, W)
         imus = imus.cuda(non_blocking=True).float()          # imus: (batch, 101, 6)

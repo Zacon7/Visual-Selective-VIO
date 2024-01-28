@@ -24,10 +24,10 @@ def conv(in_planes, out_planes, kernel_size=3, stride=1, dropout=0, batchNorm=Tr
             nn.Dropout(dropout)  # , inplace=True)
         )
 
-# The inertial encoder for raw imu data
-
 
 class InertialEncoder(nn.Module):
+    '''The inertial encoder for raw imu data'''
+
     def __init__(self, opt):
         super(InertialEncoder, self).__init__()
 
@@ -54,8 +54,7 @@ class InertialEncoder(nn.Module):
         return:
             out:(batch, seq_len=10, i_f_len=256)
         '''
-        batch_size = fi.shape[0]
-        seq_len = fi.shape[1]
+        batch_size, seq_len = fi.shape[0], fi.shape[1]
         fi = fi.view(batch_size * seq_len, fi.size(2), fi.size(3))  # fi:  (batch *seq_len=10, 11, 6)
         fi = self.encoder_conv(fi.permute(0, 2, 1))                 # fi:  (batch *seq_len=10, 256, 11)
         out = self.proj(fi.view(fi.shape[0], -1))                   # out: (batch *seq_len=10, 256)
@@ -119,7 +118,7 @@ class Encoder(nn.Module):
         # feed imus into IMU Encoder
         fi = torch.cat([imus[:, i * 10:i * 10 + 11, :].unsqueeze(1)
                        for i in range(10)], dim=1)  # fi: (batch, seq_len=10, 11, 6)
-        fi = self.inertial_encoder(fi)
+        fi = self.inertial_encoder(fi)              # fi: (batch, seq_len=10, i_f_len=256)
 
         return fv, fi
 
@@ -132,8 +131,9 @@ class Encoder(nn.Module):
         return out_conv6
 
 
-# The fusion module
 class FusionModule(nn.Module):
+    '''The fusion module'''
+
     def __init__(self, opt):
         super(FusionModule, self).__init__()
         self.fuse_method = opt.fuse_method
@@ -161,13 +161,13 @@ class FusionModule(nn.Module):
             mask = F.gumbel_softmax(weights, tau=1, hard=True, dim=-1)
             return feat_cat * mask[:, :, :, 0]
 
-# The policy network module
-
 
 class PolicyNet(nn.Module):
+    '''The policy network module'''
+
     def __init__(self, opt):
         super(PolicyNet, self).__init__()
-        in_dim = opt.rnn_hidden_size + opt.i_f_len
+        in_dim = opt.i_f_len + opt.rnn_hidden_size
         self.net = nn.Sequential(
             nn.Linear(in_dim, 256),
             nn.LeakyReLU(0.1, inplace=True),
@@ -179,14 +179,15 @@ class PolicyNet(nn.Module):
         )
 
     def forward(self, x, temp):
-        logits = self.net(x)
-        hard_mask = F.gumbel_softmax(logits, tau=temp, hard=True, dim=-1)
+        # x = concat(fi, h^t-1), shape = (batch, 1, i_f_len + rnn_hidden_size)
+        logits = self.net(x)    # logits: (batch, 1, 2)
+        hard_mask = F.gumbel_softmax(logits, tau=temp, hard=True, dim=-1)   # hard_mask: (batch, 1, 2)
         return logits, hard_mask
-
-# The pose estimation network
 
 
 class PoseRNN(nn.Module):
+    '''The pose estimation network'''
+
     def __init__(self, opt):
         super(PoseRNN, self).__init__()
 
@@ -234,17 +235,17 @@ class DeepVIO(nn.Module):
         super(DeepVIO, self).__init__()
 
         self.Feature_net = Encoder(opt)
-        self.Pose_net = PoseRNN(opt)
         self.Policy_net = PolicyNet(opt)
+        self.Pose_net = PoseRNN(opt)
         self.opt = opt
 
         initialization(self)
 
     def forward(self, imgs, imus, is_first=True, hc=None, temp=5, selection='gumbel-softmax', p=0.2):
-
-        fv, fi = self.Feature_net(imgs, imus)
-        batch_size = fv.shape[0]
-        seq_len = fv.shape[1]
+        
+        fv, fi = self.Feature_net(imgs, imus)   # fv: (batch, seq_len=10, v_f_len=512)
+                                                # fi: (batch, seq_len=10, i_f_len=256)
+        batch_size, seq_len = fv.shape[0], fv.shape[1]
 
         poses, decisions, logits = [], [], []
         hidden = torch.zeros(batch_size, self.opt.rnn_hidden_size).to(
@@ -296,7 +297,6 @@ class DeepVIO(nn.Module):
 
 
 def initialization(net):
-    # Initilization
     for m in net.modules():
         if isinstance(m, nn.Conv2d) or isinstance(m, nn.Conv1d) or \
                 isinstance(m, nn.ConvTranspose2d) or isinstance(m, nn.Linear):

@@ -32,8 +32,8 @@ parser.add_argument('--rnn_dropout_out', type=float, default=0.2, help='dropout 
 parser.add_argument('--rnn_dropout_between', type=float, default=0.2, help='dropout within LSTM')
 
 parser.add_argument('--workers', type=int, default=10, help='number of workers')
-parser.add_argument('--experiment_name', type=str, default='fastflownetnet_hard_dwconv', help='experiment name')
-parser.add_argument('--ckpt_model', type=str, default='results/train/fastflow_hard_dwconv/checkpoints/best_8.84.pth',
+parser.add_argument('--experiment_name', type=str, default='fastflownetnet_hard_dwconv128', help='experiment name')
+parser.add_argument('--ckpt_model', type=str, default='results/train/fastflow_hard_dwconv128/checkpoints/best_20.40.pth',
                     help='path to the checkpoint model')
 parser.add_argument('--flow_encoder', type=str, default='fastflownet', help='choose to use the flownet or fastflownet')
 
