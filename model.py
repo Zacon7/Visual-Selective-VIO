@@ -31,6 +31,7 @@ class InertialEncoder(nn.Module):
     def __init__(self, opt):
         super(InertialEncoder, self).__init__()
 
+        # apply Conv1d with same padding
         self.encoder_conv = nn.Sequential(
             nn.Conv1d(6, 64, kernel_size=3, padding=1),
             nn.BatchNorm1d(64),
@@ -57,8 +58,8 @@ class InertialEncoder(nn.Module):
         batch_size, seq_len = fi.shape[0], fi.shape[1]
         fi = fi.view(batch_size * seq_len, fi.size(2), fi.size(3))  # fi:  (batch *seq_len=10, 11, 6)
         fi = self.encoder_conv(fi.permute(0, 2, 1))                 # fi:  (batch *seq_len=10, 256, 11)
-        out = self.proj(fi.view(fi.shape[0], -1))                   # out: (batch *seq_len=10, 256)
-        return out.view(batch_size, seq_len, 256)                   # out: (batch, seq_len=10, 256)
+        out = self.proj(fi.view(fi.shape[0], -1))                   # out: (batch *seq_len=10, i_f_len=256)
+        return out.view(batch_size, seq_len, 256)                   # out: (batch, seq_len=10, i_f_len=256)
 
 
 class Encoder(nn.Module):
@@ -147,23 +148,23 @@ class FusionModule(nn.Module):
                 nn.Linear(self.f_len, 2 * self.f_len)
             )
 
-    def forward(self, v, i):
+    def forward(self, fv, fi):
         if self.fuse_method == 'cat':
-            return torch.cat((v, i), -1)
+            return torch.cat((fv, fi), -1)
         elif self.fuse_method == 'soft':
-            feat_cat = torch.cat((v, i), -1)
+            feat_cat = torch.cat((fv, fi), -1)
             weights = self.net(feat_cat)
             return feat_cat * weights
         elif self.fuse_method == 'hard':
-            feat_cat = torch.cat((v, i), -1)
+            feat_cat = torch.cat((fv, fi), -1)
             weights = self.net(feat_cat)
-            weights = weights.view(v.shape[0], v.shape[1], self.f_len, 2)
+            weights = weights.view(fv.shape[0], fv.shape[1], self.f_len, 2)
             mask = F.gumbel_softmax(weights, tau=1, hard=True, dim=-1)
             return feat_cat * mask[:, :, :, 0]
 
 
 class PolicyNet(nn.Module):
-    '''The policy network module'''
+    '''The policy network'''
 
     def __init__(self, opt):
         super(PolicyNet, self).__init__()
@@ -179,10 +180,18 @@ class PolicyNet(nn.Module):
         )
 
     def forward(self, x, temp):
-        # x = concat(fi, h^t-1), shape = (batch, 1, i_f_len + rnn_hidden_size)
-        logits = self.net(x)    # logits: (batch, 1, 2)
-        hard_mask = F.gumbel_softmax(logits, tau=temp, hard=True, dim=-1)   # hard_mask: (batch, 1, 2)
-        return logits, hard_mask
+        '''
+        input:
+            x: torch.concat(fi, ht_prev), shape = (batch, i_f_len + rnn_hidden_size)
+            temp: τ is a temperature parameter that controls the 'discreteness' of ̃P̃
+        return:
+            point: (batch, 2), pt ∈ R2 denotes the probability of the Bernoulli distribution
+            decision: (batch, 2), a binary decision dt to determine whether to use the visual modality or not,
+                where the decision dt is sampled from a Bernoulli distribution
+        '''
+        point = self.net(x)
+        decision = F.gumbel_softmax(point, tau=temp, hard=True, dim=-1)
+        return point, decision
 
 
 class PoseRNN(nn.Module):
@@ -211,21 +220,37 @@ class PoseRNN(nn.Module):
             nn.Linear(128, 6)
         )
 
-    def forward(self, fv, fv_alter, fi, dec, prev=None):
-        if prev is not None:
-            prev = (prev[0].transpose(1, 0).contiguous(), prev[1].transpose(1, 0).contiguous())
+    def forward(self, fv, fv_alter, fi, dec, hc_prev=None):
+        '''
+        input:
+            fv (B, 1, 512): visual features
+            fv_alter  (B, 1, 512): alternative visual features that do not use image encoder (e.g., zero padding)
+            fi (B, 1, 256): imu features
+            dec (B, 1, 2): decision mask
+            hc_prev = (ht_prev, ct_prev): LSTM state vectors from the previous time
 
-        # Select between fv and fv_alter
+        return:
+            pose (Batch, seq_len=1, 6): estimated relative poses between two time step
+            hc = (ht, ct): LSTM state vectors of the current time
+        '''
+
+        # hc in nn.LSTM is a tuple that contains hidden state ht(hc[0]) and cell state ct(hc[1])
+        # both two states have shape of (num_layers * num_directions, batch_size, hidden_size)
+        # but feeded in here is batch first
+
+        if hc_prev is not None:  # keep shape consistent with that specified by nn.LSTM
+            hc_prev = (hc_prev[0].transpose(1, 0).contiguous(), hc_prev[1].transpose(1, 0).contiguous())
+
+        # Select between fv and fv_alter on EACH Feature Dimension
         v_in = fv * dec[:, :, :1] + fv_alter * dec[:, :, -1:] if fv_alter is not None else fv
-        fused = self.fuse(v_in, fi)
+        f_fused = self.fuse(v_in, fi)   # f_fused: (Batch, seq_len=1, v_f_len + i_f_len)
 
-        # hc is a tuple that contains hidden state(hc[0]) and cell state(hc[1])
-        # both two state have shape of (num_layers * num_directions, batch_size, hidden_size)
-        out, hc = self.rnn(fused) if prev is None else self.rnn(fused, prev)
-        out = self.rnn_drop_out(out)
-        pose = self.regressor(out)
+        out, hc = self.rnn(f_fused) if hc_prev is None else self.rnn(f_fused, hc_prev)
+        out = self.rnn_drop_out(out)    # out: (Batch, seq_len=1, rnn_hidden_size)
+        pose = self.regressor(out)      # pose: (Batch, seq_len=1, 6)
 
-        # Make sure that hc order conforms to the shape of (batch_size, seq_len, hidden size)
+        # Transpose ht & ct to the shape of (batch_size, num_layers * num_directions, hidden size),
+        # for the convenience of following use
         hc = (hc[0].transpose(1, 0).contiguous(), hc[1].transpose(1, 0).contiguous())
         return pose, hc
 
@@ -241,57 +266,51 @@ class DeepVIO(nn.Module):
 
         initialization(self)
 
-    def forward(self, imgs, imus, is_first=True, hc=None, temp=5, selection='gumbel-softmax', p=0.2):
-        
-        fv, fi = self.Feature_net(imgs, imus)   # fv: (batch, seq_len=10, v_f_len=512)
-                                                # fi: (batch, seq_len=10, i_f_len=256)
-        batch_size, seq_len = fv.shape[0], fv.shape[1]
+    def forward(self, imgs, imus, is_first=True, hc=None, temp=5, selection='gumbel-softmax', p=0.5):
 
-        poses, decisions, logits = [], [], []
+        fv, fi = self.Feature_net(imgs, imus)
+        batch_size, seq_len = fv.shape[0], fv.shape[1]
+        # fv: (batch, seq_len=10, v_f_len=512)
+        # fi: (batch, seq_len=10, i_f_len=256)
+
+        poses, decisions, points = [], [], []
         hidden = torch.zeros(batch_size, self.opt.rnn_hidden_size).to(
             fv.device) if hc is None else hc[0].contiguous()[:, -1, :]
         fv_alter = torch.zeros_like(fv)  # zero padding in the paper, can be replaced by other
 
+        # Estimate the relative pose between every two time steps
         for i in range(seq_len):
             if i == 0 and is_first:
                 # The first relative pose is estimated by both images and imu by default
                 pose, hc = self.Pose_net(fv[:, i:i + 1, :], None, fi[:, i:i + 1, :], None, hc)
+
             else:
                 if selection == 'gumbel-softmax':
-                    # Otherwise, sample the decision from the policy network
+                    # Otherwise, sample the decision dt from the policy network
                     p_in = torch.cat((fi[:, i, :], hidden), -1)
-                    logit, decision = self.Policy_net(p_in.detach(), temp)
-                    decision = decision.unsqueeze(1)
-                    logit = logit.unsqueeze(1)
-                    pose, hc = self.Pose_net(
-                        fv[:, i: i + 1, :],
-                        fv_alter[:, i: i + 1, :],
-                        fi[:, i: i + 1, :],
-                        decision, hc)
-                    decisions.append(decision)
-                    logits.append(logit)
+                    pt, dt = self.Policy_net(p_in.detach(), temp)  # pt, dt: (batch, 2)
+                    pt, dt = pt.unsqueeze(1), dt.unsqueeze(1)      # pt, dt: (batch, 1, 2)
+                    pose, hc = self.Pose_net(fv[:, i: i + 1, :], fv_alter[:, i: i + 1, :], fi[:, i: i + 1, :], dt, hc)
+                    decisions.append(dt)
+                    points.append(pt)
 
                 elif selection == 'random':
-                    decision = (torch.rand(fv.shape[0], 1, 2) < p).float()
-                    decision[:, :, 1] = 1 - decision[:, :, 0]
-                    decision = decision.to(fv.device)
-                    logit = 0.5 * torch.ones((fv.shape[0], 1, 2)).to(fv.device)
-                    pose, hc = self.Pose_net(
-                        fv[:, i: i + 1, :],
-                        fv_alter[:, i: i + 1, :],
-                        fi[:, i: i + 1, :],
-                        decision, hc)
-                    decisions.append(decision)
-                    logits.append(logit)
+                    dt = (torch.rand(fv.shape[0], 1, 2) < p).float()
+                    dt[:, :, 1] = 1 - dt[:, :, 0]
+                    dt = dt.to(fv.device)
+                    pt = p * torch.ones((fv.shape[0], 1, 2)).to(fv.device)  # pt, dt: (batch, 1, 2)
+                    pose, hc = self.Pose_net(fv[:, i: i + 1, :], fv_alter[:, i: i + 1, :], fi[:, i: i + 1, :], dt, hc)
+                    decisions.append(dt)
+                    points.append(pt)
 
-            poses.append(pose)
-            # The purpose of hc[0][:, -1,:] is to select the hidden state of the last layer for each sample.
-            hidden = hc[0].contiguous()[:, -1, :]
+            poses.append(pose)  # pose: (Batch, 1, 6)
+            # Select the hidden state of the last layer for each sample.
+            hidden = hc[0].contiguous()[:, -1, :]   # hidden: (batch_size, self.opt.rnn_hidden_size)
 
         poses = torch.cat(poses, dim=1)
         decisions = torch.cat(decisions, dim=1)
-        logits = torch.cat(logits, dim=1)
-        probs = torch.nn.functional.softmax(logits, dim=-1)
+        points = torch.cat(points, dim=1)
+        probs = torch.nn.functional.softmax(points, dim=-1)
 
         return poses, decisions, probs, hc
 

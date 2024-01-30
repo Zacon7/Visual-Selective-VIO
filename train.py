@@ -35,27 +35,27 @@ parser.add_argument('--rnn_dropout_between', type=float, default=0.2, help='drop
 parser.add_argument('--weight_decay', type=float, default=1e-5, help='weight decay for the optimizer')
 parser.add_argument('--batch_size', type=int, default=32, help='batch size')
 parser.add_argument('--seq_len', type=int, default=11, help='sequence length for LSTM')
-parser.add_argument('--workers', type=int, default=6, help='number of workers')
+parser.add_argument('--workers', type=int, default=2, help='number of workers')
 parser.add_argument('--optimizer', type=str, default='Adam', help='type of optimizer [Adam, SGD]')
 parser.add_argument('--epochs_warmup', type=int, default=40, help='number of epochs for warmup')
 parser.add_argument('--epochs_joint', type=int, default=40, help='number of epochs for joint training')
 parser.add_argument('--epochs_fine', type=int, default=20, help='number of epochs for finetuning')
-parser.add_argument('--lr_warmup', type=float, default=5e-4, help='learning rate for warming up stage')
+parser.add_argument('--lr_warmup', type=float, default=3e-4, help='learning rate for warming up stage')
 parser.add_argument('--lr_joint', type=float, default=3e-5, help='learning rate for joint training stage')
-parser.add_argument('--lr_fine', type=float, default=1e-5, help='learning rate for finetuning stage')
+parser.add_argument('--lr_fine', type=float, default=2e-5, help='learning rate for finetuning stage')
 parser.add_argument('--eta', type=float, default=0.05, help='exponential decay factor for temperature')
 parser.add_argument('--temp_init', type=float, default=5, help='initial temperature for gumbel-softmax')
 parser.add_argument('--alpha', type=float, default=100, help='weight to balance translational & rotational loss.')
 parser.add_argument('--Lambda', type=float, default=3e-5, help='penalty factor for the visual encoder usage')
 
-parser.add_argument('--experiment_name', type=str, default='fastflow_hard_flow6', help='experiment name')
+parser.add_argument('--experiment_name', type=str, default='test_lstm', help='experiment name')
 parser.add_argument('--load_cache', default=True, help='whether to load the dataset pickle cache')
 parser.add_argument('--pkl_path', type=str, default='./dataset/kitti.pkl', help='path to load the dataset pickle cache')
 
 parser.add_argument('--ckpt_model', type=str, default=None, help='path to load the checkpoint')
 parser.add_argument('--flow_encoder', type=str, default='fastflownet', help='choose to use the flownet or fastflownet')
 parser.add_argument('--flownetBN', default=True, help='choose to use the flownetS or flownetS_BN')
-parser.add_argument('--pretrain_flownet', type=str, default='pretrain_models/fastflownet_ft_mix.pth',
+parser.add_argument('--pretrain_flownet', type=str, default='pretrain_models/fastflownet_ft_kitti.pth',
                     help='path to load pretrained flownet model')
 
 parser.add_argument('--hflip', default=False, action='store_true',
@@ -139,13 +139,16 @@ def train_epoch(model, optimizer, train_loader, image_cache, selection, temp, lo
 
         pose_loss = args.alpha * angle_loss + translation_loss
         penalty_loss = (decisions[:, :, 0].float()).sum(-1).mean()
-        loss = pose_loss + args.Lambda * penalty_loss
+        total_loss = pose_loss + args.Lambda * penalty_loss
 
-        loss.backward()
+        total_loss.backward()
         optimizer.step()
 
         if i % args.print_frequency == 0:
-            message = f'Epoch: {ep}, batch: {i}/{data_len}, pose_loss: {pose_loss.item():.6f}, penalty_loss: {penalty_loss.item():.6f}, total loss: {loss.item():.6f}'
+            message = f'Epoch: {ep}, batch: {i}/{data_len}, '\
+                      f'pose_loss: {pose_loss.item():.6f}, '\
+                      f'penalty_loss: {penalty_loss.item():.6f}, '\
+                      f'total loss: {total_loss.item():.6f}'
             print(message)
             logger.info(message)
 
@@ -214,6 +217,9 @@ def main():
         pin_memory=True
     )
 
+    # Initialize the tester
+    tester = KITTI_tester(args)
+
     # GPU selections
     str_ids = args.gpu_ids.split(',')
     gpu_ids = []
@@ -223,9 +229,6 @@ def main():
             gpu_ids.append(id)
     if len(gpu_ids) > 0:
         torch.cuda.set_device(gpu_ids[0])
-
-    # Initialize the tester
-    tester = KITTI_tester(args)
 
     # Initialize the model
     model = DeepVIO(args)
@@ -250,7 +253,7 @@ def main():
         model_dict.update(update_dict)
         model.Feature_net.load_state_dict(model_dict)
 
-    # Feed model to GPU
+    # Move model to GPU
     model.cuda(gpu_ids[0])
     model = torch.nn.DataParallel(model, device_ids=gpu_ids)
 
@@ -275,18 +278,27 @@ def main():
         print(message)
         logger.info(message)
 
+        # Train one epoch
         model.train()
         avg_pose_loss, avg_penalty_loss = train_epoch(
             model, optimizer, train_loader, image_cache, selection, temp, logger, epoch, p=0.5)
+        avg_total_loss = avg_pose_loss + args.Lambda * avg_penalty_loss
 
-        # Save the model after training
+        # Save the model per epoch
         torch.save(model.module.state_dict(), f'{checkpoints_dir}/{epoch:003}.pth')
-        message = f'Epoch {epoch} training finished, pose loss: {avg_pose_loss:.6f}, penalty_loss: {avg_penalty_loss:.6f}, model saved'
+
+        # Print the loss per epoch
+        message = f'Epoch {epoch} training finished, ' \
+                  f'average pose_loss: {avg_pose_loss:.6f}, ' \
+                  f'average penalty_loss: {avg_penalty_loss:.6f}, ' \
+                  f'average total_loss: {avg_total_loss:.6f}, model saved'
+
         print(message)
         logger.info(message)
 
+        # ======================================================================================
+        # Evaluate the model
         if epoch > args.epochs_warmup + args.epochs_joint:
-            # Evaluate the model
             print('Evaluating the model')
             logger.info('Evaluating the model')
             with torch.no_grad():
@@ -299,15 +311,19 @@ def main():
             r_rmse = np.mean([errors[i]['r_rmse'] for i in range(len(errors))])
             usage = np.mean([errors[i]['usage'] for i in range(len(errors))])
 
+            # Save the best model
             if t_rel < best:
                 best = t_rel
                 torch.save(model.module.state_dict(), f'{checkpoints_dir}/best_{best:.2f}.pth')
 
-            message = f'Epoch {epoch} evaluation finished, \
-                        t_rel: {t_rel:.4f}, r_rel: {r_rel:.4f}, t_rmse: {t_rmse:.4f}, \
-                        r_rmse: {r_rmse:.4f}, usage: {usage:.4f}, best t_rel: {best:.4f}'
+            message = f'Epoch {epoch} evaluation finished, ' \
+                      f't_rel: {t_rel:.4f}, r_rel: {r_rel:.4f}, ' \
+                      f't_rmse: {t_rmse:.4f}, r_rmse: {r_rmse:.4f}, ' \
+                      f'usage: {usage:.4f}, best t_rel: {best:.4f}'
+
             logger.info(message)
             print(message)
+        # ======================================================================================
 
     message = f'Training finished, best t_rel: {best:.4f}'
     logger.info(message)
