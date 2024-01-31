@@ -14,7 +14,7 @@ class Correlation(nn.Module):
 
     def forward(self, x, y):
         b, c, h, w = x.shape
-        return self.corr(x, y).view(b, -1, h, w) / c
+        return self.corr(x, y).view(b, -1, h, w) / c    # Normalization, Makes the network more stable during training
 
 
 def convrelu(in_channels, out_channels, kernel_size=3, stride=1,
@@ -37,13 +37,13 @@ class Decoder(nn.Module):
         super(Decoder, self).__init__()
         self.in_channels = in_channels
         self.groups = groups
-        self.conv1 = convrelu(in_channels, 96, 3, 1)
-        self.conv2 = convrelu(96, 96, 3, 1, groups=groups)
-        self.conv3 = convrelu(96, 96, 3, 1, groups=groups)
-        self.conv4 = convrelu(96, 96, 3, 1, groups=groups)
-        # self.conv5 = convrelu(96, 64, 3, 1)
-        # self.conv6 = convrelu(64, 32, 3, 1)
-        # self.conv7 = nn.Conv2d(32, 2, 3, 1, 1)
+        self.conv1 = convrelu(in_channels, 96, kernel_size=3, stride=1)
+        self.conv2 = convrelu(96, 96, kernel_size=3, stride=1, groups=groups)
+        self.conv3 = convrelu(96, 96, kernel_size=3, stride=1, groups=groups)
+        self.conv4 = convrelu(96, 96, kernel_size=3, stride=1, groups=groups)
+        # self.conv5 = convrelu(96, 64, kernel_size=3, stride=1)
+        # self.conv6 = convrelu(64, 32, kernel_size=3, stride=1)
+        # self.conv7 = nn.Conv2d(32, 2, kernel_size=3, stride=1, 1)
 
     def channel_shuffle(self, x, groups):
         b, c, h, w = x.size()
@@ -90,10 +90,8 @@ class FastFlowNet(nn.Module):
                                    64, 66, 68, 70,
                                    72, 74, 76, 78, 80])
 
-        self.rconv6 = convrelu(64, 32, 3, 1)
+        self.rconv6 = convrelu(64, 32, kernel_size=3, stride=1)
         self.decoder6 = Decoder(87, groups)
-
-        # self.dw_conv = convrelu(96, 128, kernel_size=1, stride=1, batch_norm=True)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -116,11 +114,6 @@ class FastFlowNet(nn.Module):
         f25 = F.avg_pool2d(f24, kernel_size=(2, 2), stride=(2, 2))
         f16 = F.avg_pool2d(f15, kernel_size=(2, 2), stride=(2, 2))
         f26 = F.avg_pool2d(f25, kernel_size=(2, 2), stride=(2, 2))      # (batch, 64, 4, 8)
-
-        # f_concat = torch.cat([f16, f26], dim=1)     # (batch, 128, 4, 8)
-        # f = self.dw_conv(f_concat)                  # (batch, 128, 4, 8)
-
-        # return f
 
         flow7_up = torch.zeros(f16.size(0), 2, f16.size(2), f16.size(3)).to(f15)
         cv6 = torch.index_select(self.corr(f16, f26), dim=1, index=self.index.to(f16).long())

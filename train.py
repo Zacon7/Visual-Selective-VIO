@@ -33,9 +33,9 @@ parser.add_argument('--rnn_dropout_out', type=float, default=0.2, help='dropout 
 parser.add_argument('--rnn_dropout_between', type=float, default=0.2, help='dropout within LSTM')
 
 parser.add_argument('--weight_decay', type=float, default=1e-5, help='weight decay for the optimizer')
-parser.add_argument('--batch_size', type=int, default=32, help='batch size')
+parser.add_argument('--batch_size', type=int, default=4, help='batch size')
 parser.add_argument('--seq_len', type=int, default=11, help='sequence length for LSTM')
-parser.add_argument('--workers', type=int, default=2, help='number of workers')
+parser.add_argument('--workers', type=int, default=8, help='number of workers')
 parser.add_argument('--optimizer', type=str, default='Adam', help='type of optimizer [Adam, SGD]')
 parser.add_argument('--epochs_warmup', type=int, default=40, help='number of epochs for warmup')
 parser.add_argument('--epochs_joint', type=int, default=40, help='number of epochs for joint training')
@@ -48,8 +48,8 @@ parser.add_argument('--temp_init', type=float, default=5, help='initial temperat
 parser.add_argument('--alpha', type=float, default=100, help='weight to balance translational & rotational loss.')
 parser.add_argument('--Lambda', type=float, default=3e-5, help='penalty factor for the visual encoder usage')
 
-parser.add_argument('--experiment_name', type=str, default='test_lstm', help='experiment name')
-parser.add_argument('--load_cache', default=True, help='whether to load the dataset pickle cache')
+parser.add_argument('--experiment_name', type=str, default='test_model', help='experiment name')
+parser.add_argument('--load_cache', default=False, help='whether to load the dataset pickle cache')
 parser.add_argument('--pkl_path', type=str, default='./dataset/kitti.pkl', help='path to load the dataset pickle cache')
 
 parser.add_argument('--ckpt_model', type=str, default=None, help='path to load the checkpoint')
@@ -124,21 +124,23 @@ def train_epoch(model, optimizer, train_loader, image_cache, selection, temp, lo
         imgs = imgs.cuda(non_blocking=True).float()          # imgs: (batch, seq_len=11, 3, H, W)
         imus = imus.cuda(non_blocking=True).float()          # imus: (batch, 101, 6)
         gts = gts.cuda(non_blocking=True).float()            # gts:  (batch, 10, 6)
-        weights = weights.cuda(non_blocking=True).float()    # weights: (batch, 1)
+        weights = weights.cuda(non_blocking=True).float()    # weights: (batch)
 
         optimizer.zero_grad()
-        poses, decisions, probs, _ = model(imgs, imus, is_first=True, hc=None, temp=temp, selection=selection, p=p)
+        rel_poses, decisions, probs, _ = model(imgs, imus, is_first=True, hc=None, temp=temp, selection=selection, p=p)
+        # rel_poses: (batch, 10, 6);     decisions: (batch, 9, 2);       probs : (batch, 9, 2)
 
+        # rel_poses, gt_poses = (θx, θy, θz, ρx, ρy, ρz)
         if not weighted:
-            angle_loss = torch.nn.functional.mse_loss(poses[:, :, :3], gts[:, :, :3])
-            translation_loss = torch.nn.functional.mse_loss(poses[:, :, 3:], gts[:, :, 3:])
+            angle_loss = torch.nn.functional.mse_loss(rel_poses[:, :, :3], gts[:, :, :3])
+            translation_loss = torch.nn.functional.mse_loss(rel_poses[:, :, 3:], gts[:, :, 3:])
         else:
             weights = weights / weights.sum()
-            angle_loss = (weights.unsqueeze(-1).unsqueeze(-1) * (poses[:, :, :3] - gts[:, :, :3]) ** 2).mean()
-            translation_loss = (weights.unsqueeze(-1).unsqueeze(-1) * (poses[:, :, 3:] - gts[:, :, 3:]) ** 2).mean()
+            angle_loss = (weights.unsqueeze(-1).unsqueeze(-1) * (rel_poses[:, :, :3] - gts[:, :, :3]) ** 2).mean()
+            translation_loss = (weights.unsqueeze(-1).unsqueeze(-1) * (rel_poses[:, :, 3:] - gts[:, :, 3:]) ** 2).mean()
 
-        pose_loss = args.alpha * angle_loss + translation_loss
-        penalty_loss = (decisions[:, :, 0].float()).sum(-1).mean()
+        pose_loss = translation_loss + args.alpha * angle_loss
+        penalty_loss = (decisions[:, :, 0].float()).sum(-1).mean()  # 平均每个bach每段时序上使用了视觉特征的次数
         total_loss = pose_loss + args.Lambda * penalty_loss
 
         total_loss.backward()
@@ -173,7 +175,7 @@ def main():
     # Create logs
     logger = logging.getLogger(args.experiment_name)
     logger.setLevel(logging.INFO)
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    formatter = logging.Formatter('%(asctime)s - %(message)s')
     file_handler = logging.FileHandler(str(log_dir) + '/%s.txt' % args.experiment_name)
     file_handler.setLevel(logging.INFO)
     file_handler.setFormatter(formatter)

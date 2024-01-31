@@ -34,7 +34,8 @@ class KITTI(Dataset):
     def make_dataset(self):
         sequence_set = []
         for folder in self.train_seqs:
-            # poses: (img_nums, 4, 4),   poses_rel: (img_nums-1, 6)
+            # poses: (img_nums, 4, 4),      poses_rel: (img_nums-1, 6)
+            # poses: SE(3)={R, t, 0, 1}     poses_rel:(θx, θy, θz, ρx, ρy, ρz)
             poses, poses_rel = read_pose_from_text(self.data_root / 'poses/{}.txt'.format(folder))
             # imus: ((img_nums-1)*IMU_FREQ + 1, 6),    fpaths: len(img_nums)
             imus = sio.loadmat(self.data_root / 'imus/{}.mat'.format(folder))['imu_data_interp']
