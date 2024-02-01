@@ -24,7 +24,7 @@ parser.add_argument('--img_h', type=int, default=256, help='image height')
 parser.add_argument('--img_w', type=int, default=512, help='image width')
 parser.add_argument('--v_f_len', type=int, default=512, help='visual feature length')
 parser.add_argument('--i_f_len', type=int, default=256, help='imu feature length')
-parser.add_argument('--fuse_method', type=str, default='cat', help='fusion method [cat, soft, hard]')
+parser.add_argument('--fuse_method', type=str, default='hard', help='fusion method [cat, soft, hard]')
 parser.add_argument('--imu_dropout', type=float, default=0, help='dropout for the IMU encoder')
 
 parser.add_argument('--rnn_hidden_size', type=int, default=1024, help='size of the LSTM latent')
@@ -32,10 +32,10 @@ parser.add_argument('--rnn_dropout_out', type=float, default=0.2, help='dropout 
 parser.add_argument('--rnn_dropout_between', type=float, default=0.2, help='dropout within LSTM')
 
 parser.add_argument('--workers', type=int, default=8, help='number of workers')
-parser.add_argument('--experiment_name', type=str, default='test_cat_new', help='experiment name')
-parser.add_argument('--ckpt_model', type=str, default='results/train/flownet_cat_new/checkpoints/best_3.96.pth',
+parser.add_argument('--experiment_name', type=str, default='test_model', help='experiment name')
+parser.add_argument('--ckpt_model', type=str, default='results/train/fastflow_hard_5e-5/checkpoints/best_12.04.pth',
                     help='path to the checkpoint model')
-parser.add_argument('--flow_encoder', type=str, default='flownet', help='choose to use the flownet or fastflownet')
+parser.add_argument('--flow_encoder', type=str, default='fastflownet', help='choose to use the flownet or fastflownet')
 parser.add_argument('--flownetBN', default=True, help='choose to use the flownetS or flownetS_BN')
 
 args = parser.parse_args()

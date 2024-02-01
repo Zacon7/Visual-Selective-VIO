@@ -34,20 +34,26 @@ class KITTI(Dataset):
     def make_dataset(self):
         sequence_set = []
         for folder in self.train_seqs:
-            # poses: (img_nums, 4, 4),      poses_rel: (img_nums-1, 6)
-            # poses: SE(3)={R, t, 0, 1}     poses_rel:(θx, θy, θz, ρx, ρy, ρz)
-            poses, poses_rel = read_pose_from_text(self.data_root / 'poses/{}.txt'.format(folder))
-            # imus: ((img_nums-1)*IMU_FREQ + 1, 6),    fpaths: len(img_nums)
+
+            # poses_abs: (img_nums, 4, 4)      poses_rel: (img_nums-1, 6)
+            # poses_abs: SE(3)={R, t, 0, 1}     poses_rel:(θx, θy, θz, ρx, ρy, ρz)
+            poses_abs, poses_rel = read_pose_from_text(self.data_root / 'poses/{}.txt'.format(folder))
+
+            # imus: ((img_nums-1)*IMU_FREQ + 1, 6)
             imus = sio.loadmat(self.data_root / 'imus/{}.mat'.format(folder))['imu_data_interp']
+
+            # fpaths: len(img_nums)
             fpaths = sorted((self.data_root / 'sequences/{}/image_2'.format(folder)).files("*.png"))
 
             for i in range(len(fpaths) - self.sequence_length):
-                img_samples = fpaths[i:i + self.sequence_length]                          # img_samples: len(11)
+                img_samples = fpaths[i:i + self.sequence_length]                    # img_samples: len(11)
                 imu_samples = imus[i * IMU_FREQ:(i + self.sequence_length - 1)
-                                   * IMU_FREQ + 1]    # img_samples: (101, 6)
-                pose_samples = poses[i:i + self.sequence_length]
-                pose_rel_samples = poses_rel[i:i + self.sequence_length - 1]                # pose_rel_samples: (10, 6)
-                segment_rot = rotationError(pose_samples[0], pose_samples[-1])
+                                   * IMU_FREQ + 1]                                  # imu_samples: (101, 6)
+                pose_abs_samples = poses_abs[i:i + self.sequence_length]
+                pose_rel_samples = poses_rel[i:i + self.sequence_length - 1]        # pose_rel_samples: (10, 6)
+                pose_error = np.dot(np.linalg.inv(pose_abs_samples[0]), pose_abs_samples[-1])
+                segment_rot = rotationError(pose_error)
+
                 # imgs: len(11),      imus: (101, 6),     gts: (10, 6),            rot: a real number
                 sample = {'imgs': img_samples, 'imus': imu_samples, 'gts': pose_rel_samples, 'rot': segment_rot}
                 sequence_set.append(sample)

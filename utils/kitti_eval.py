@@ -130,8 +130,8 @@ def kitti_eval(rel_pose_est, rel_pose_gt, dec_est):
         rel_pose_gt:  (2760, 6), ground-truth Relative pose in R6 throughout the trajectory
         dec_est: (2759,), The decision at every time step except the first frame throughout the trajectory
     return:
-        global_pose_mat_est: len(2761) with estimated Global pose in 4x4 matrix SE(3), starting from the first frame
-        global_pose_mat_gt:  len(2761) with ground-truth Global pose in 4x4 matrix SE(3), starting from the first frame
+        abs_pose_mat_est: len(2761) with estimated Absolute pose in 4x4 matrix SE(3), starting from the first frame
+        abs_pose_mat_gt:  len(2761) with ground-truth Absolute pose in 4x4 matrix SE(3), starting from the first frame
         t_rmse, r_rmse: A real number, the RMSE of translation and rotation (euler angles) error of Relative Pose throughout the trajectory, aka ATE
         t_rel, r_rel: A percentage score, average pose error (per hundred meters) for all valid segments throughout the trajectory, aka RPE
         usage: Average percentage of visual features enabled across the entire trajectory
@@ -144,12 +144,12 @@ def kitti_eval(rel_pose_est, rel_pose_gt, dec_est):
     # Calculate the translational and rotational RMSE of Relative pose throughout the trajectory
     t_rmse, r_rmse = rmse_err_cal(rel_pose_est, rel_pose_gt)
 
-    # Transfer R6 relative pose to 4x4 global pose matrix SE(3)
-    global_pose_mat_est = path_accu(rel_pose_est)
-    global_pose_mat_gt = path_accu(rel_pose_gt)
+    # Transfer R6 relative pose to 4x4 absolute pose matrix SE(3)
+    abs_pose_mat_est = path_accu(rel_pose_est)
+    abs_pose_mat_gt = path_accu(rel_pose_gt)
 
     # Using KITTI metric
-    err_list, t_rel, r_rel, speed = kitti_metric_eval(global_pose_mat_est, global_pose_mat_gt)
+    err_list, t_rel, r_rel, speed = kitti_metric_eval(abs_pose_mat_est, abs_pose_mat_gt)
 
     # Convert errors to percentage and Convert rotation error from radians to angles
     t_rel = t_rel * 100
@@ -157,15 +157,15 @@ def kitti_eval(rel_pose_est, rel_pose_gt, dec_est):
     r_rmse = r_rmse / np.pi * 180
     usage = np.mean(dec_est) * 100  # Average percentage of visual features enabled across the entire trajectory
 
-    return global_pose_mat_est, global_pose_mat_gt, t_rel, r_rel, t_rmse, r_rmse, usage, speed
+    return abs_pose_mat_est, abs_pose_mat_gt, t_rel, r_rel, t_rmse, r_rmse, usage, speed
 
 
-def kitti_metric_eval(global_pose_est, global_pose_gt):
+def kitti_metric_eval(abs_pose_est, abs_pose_gt):
     '''
     Traverse all the poses at both ends of the fixed distance, and calculate their errors.
     input:
-        global_pose_est: len(2761) with estimated Global pose in SE(3), starting from the first frame
-        global_pose_gt:  len(2761) with ground-truth Global pose in SE(3), starting from the first frame
+        abs_pose_est: len(2761) with estimated Absolute pose in SE(3), starting from the first frame
+        abs_pose_gt:  len(2761) with ground-truth Absolute pose in SE(3), starting from the first frame
     return:
         err: len(n < 2761) with average errors per meter for all subsequences of different lengths
         t_rel, r_rel: a real number, average error per meter for all subsequences of different lengths throughout the trajectory
@@ -175,10 +175,10 @@ def kitti_metric_eval(global_pose_est, global_pose_gt):
 
     err = []
     # Calculate the accumulate distance and current speed for each frame
-    dist, speed = trajectoryDistances(global_pose_gt)   # dist, speed: len(2761)
+    dist, speed = trajectoryDistances(abs_pose_gt)   # dist, speed: len(2761)
     step_size = 1  # 10Hz
 
-    for i in range(0, len(global_pose_gt), step_size):    # Iterate through all frames with step size
+    for i in range(0, len(abs_pose_gt), step_size):    # Iterate through all frames with step size
 
         for len_ in subsequences:   # Iterate through all subsequences
 
@@ -186,12 +186,12 @@ def kitti_metric_eval(global_pose_est, global_pose_gt):
             j = lastFrameFromSegmentLength(dist, i, len_)
 
             # Continue if sequence not long enough
-            if j == -1 or j >= len(global_pose_est) or i >= len(global_pose_est):
+            if j == -1 or j >= len(abs_pose_est) or i >= len(abs_pose_est):
                 continue
 
             # Calculate the ground-truth and estimated Relative pose SE(3) from end to end
-            pose_delta_gt = np.dot(np.linalg.inv(global_pose_gt[i]), global_pose_gt[j])
-            pose_delta_est = np.dot(np.linalg.inv(global_pose_est[i]), global_pose_est[j])
+            pose_delta_gt = np.dot(np.linalg.inv(abs_pose_gt[i]), abs_pose_gt[j])
+            pose_delta_est = np.dot(np.linalg.inv(abs_pose_est[i]), abs_pose_est[j])
             pose_error = np.dot(np.linalg.inv(pose_delta_est), pose_delta_gt)
 
             # Calculate Relative Pose Error, RPE
