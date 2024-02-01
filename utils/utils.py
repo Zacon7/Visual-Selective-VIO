@@ -71,11 +71,10 @@ def get_relative_pose_6DoF(Rt1, Rt2):
     return pose_rel
 
 
-def rotationError(Rt1, Rt2):
+def rotationError(pose_error):
     '''
     Calculate the rotation difference between two pose matrices
     '''
-    pose_error = get_relative_pose(Rt1, Rt2)
     a = pose_error[0, 0]
     b = pose_error[1, 1]
     c = pose_error[2, 2]
@@ -83,11 +82,10 @@ def rotationError(Rt1, Rt2):
     return np.arccos(max(min(d, 1.0), -1.0))
 
 
-def translationError(Rt1, Rt2):
+def translationError(pose_error):
     '''
-    Calculate the translational difference between two pose matrices
+    Calculate the translational RMSE error between two pose matrices
     '''
-    pose_error = get_relative_pose(Rt1, Rt2)
     dx = pose_error[0, 3]
     dy = pose_error[1, 3]
     dz = pose_error[2, 3]
@@ -96,7 +94,7 @@ def translationError(Rt1, Rt2):
 
 def eulerAnglesToRotationMatrix(theta):
     '''
-    Calculate the rotation matrix from eular angles (roll, yaw, pitch)
+    Calculate the rotation matrix R from eular angles (roll, yaw, pitch)
     '''
     R_x = np.array([[1, 0, 0],
                     [0, np.cos(theta[0]), -np.sin(theta[0])],
@@ -127,7 +125,7 @@ def normalize_angle_delta(angle):
 
 def pose_6DoF_to_matrix(pose):
     '''
-    Calculate the 3x4 transformation matrix from Eular angles and translation vector
+    Calculate the 4x4 transformation matrix SE(3) from Eular angles and translation vector R6
     '''
     R = eulerAnglesToRotationMatrix(pose[:3])
     t = pose[3:].reshape(3, 1)
@@ -136,55 +134,55 @@ def pose_6DoF_to_matrix(pose):
     return R
 
 
-def pose_accu(Rt_pre, R_rel):
+def pose_accu(Rt_pre, R6_rel):
     '''
     Calculate the accumulated pose from the latest pose and the relative rotation and translation
     '''
-    Rt_rel = pose_6DoF_to_matrix(R_rel)
+    Rt_rel = pose_6DoF_to_matrix(R6_rel)
     return Rt_pre @ Rt_rel
 
 
-def path_accu(pose):
+def path_accu(rel_pose):
     '''
     Generate the global pose matrices from a series of relative poses
     '''
-    answer = [np.eye(4)]
-    for index in range(pose.shape[0]):
-        pose_ = pose_accu(answer[-1], pose[index, :])
-        answer.append(pose_)
-    return answer
+    global_poses = [np.eye(4)]
+    for index in range(rel_pose.shape[0]):
+        curr_pose = pose_accu(global_poses[-1], rel_pose[index, :])
+        global_poses.append(curr_pose)
+    return global_poses
 
 
 def moving_average(x, w):
     return np.convolve(x, np.ones(w), 'same') / w
 
 
-def rmse_err_cal(pose_est, pose_gt):
+def rmse_err_cal(rel_pose_est, rel_pose_gt):
     '''
     Calculate the rmse of relative translation and rotation
     '''
-    t_rmse = np.sqrt(np.mean(np.sum((pose_est[:, 3:] - pose_gt[:, 3:])**2, -1)))
-    r_rmse = np.sqrt(np.mean(np.sum((pose_est[:, :3] - pose_gt[:, :3])**2, -1)))
+    t_rmse = np.sqrt(np.mean(np.sum((rel_pose_est[:, 3:] - rel_pose_gt[:, 3:])**2, -1)))
+    r_rmse = np.sqrt(np.mean(np.sum((rel_pose_est[:, :3] - rel_pose_gt[:, :3])**2, -1)))
     return t_rmse, r_rmse
 
 
-def trajectoryDistances(poses):
+def trajectoryDistances(global_poses):
     '''
     Calculate the distance and speed for each frame
     '''
-    dist = [0]
-    speed = [0]
-    for i in range(len(poses) - 1):
+    dists = [0]
+    speeds = [0]
+    for i in range(len(global_poses) - 1):
         cur_frame_idx = i
         next_frame_idx = cur_frame_idx + 1
-        P1 = poses[cur_frame_idx]
-        P2 = poses[next_frame_idx]
+        P1 = global_poses[cur_frame_idx]
+        P2 = global_poses[next_frame_idx]
         dx = P1[0, 3] - P2[0, 3]
         dy = P1[1, 3] - P2[1, 3]
         dz = P1[2, 3] - P2[2, 3]
-        dist.append(dist[i] + np.sqrt(dx**2 + dy**2 + dz**2))
-        speed.append(np.sqrt(dx**2 + dy**2 + dz**2) * 10)
-    return dist, speed
+        dists.append(dists[i] + np.sqrt(dx**2 + dy**2 + dz**2))
+        speeds.append(np.sqrt(dx**2 + dy**2 + dz**2) * 10)
+    return dists, speeds
 
 
 def lastFrameFromSegmentLength(dist, first_frame, len_):
@@ -195,6 +193,9 @@ def lastFrameFromSegmentLength(dist, first_frame, len_):
 
 
 def computeOverallErr(seq_err):
+    '''
+    Calculate average errors per meter for all subsequences of different lengths
+    '''
     t_err = 0
     r_err = 0
     seq_len = len(seq_err)

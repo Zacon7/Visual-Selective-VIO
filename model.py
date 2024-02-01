@@ -323,9 +323,9 @@ class DeepVIO(nn.Module):
             hidden = hc[0].contiguous()[:, -1, :]   # hidden: (batch_size, self.opt.rnn_hidden_size)
 
         poses = torch.cat(poses, dim=1)             # poses: (batch, 10, 6)
-        decisions = torch.cat(decisions, dim=1)     # decisions: (batch, 9, 2)
-        points = torch.cat(points, dim=1)           # points: (batch, 9, 2)
-        probs = torch.nn.functional.softmax(points, dim=-1)  # probs: (batch, 9, 2)
+        decisions = torch.cat(decisions, dim=1)     # decisions: (batch, 9/10, 2)
+        points = torch.cat(points, dim=1)           # points: (batch, 9/10, 2)
+        probs = torch.nn.functional.softmax(points, dim=-1)  # probs: (batch, 9/10, 2)
 
         return poses, decisions, probs, hc
 
