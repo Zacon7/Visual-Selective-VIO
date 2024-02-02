@@ -2,8 +2,7 @@ from scipy.ndimage import convolve1d
 from scipy.signal.windows import triang
 from scipy.ndimage import gaussian_filter1d
 from collections import Counter
-from utils import custom_transform
-from utils.utils import rotationError, read_pose_from_text
+from utils.utils import rotationError, read_pose_from_text, poses_SE3_to_quaternion
 from path import Path
 import scipy.io as sio
 from torch.utils.data import Dataset
@@ -35,9 +34,12 @@ class KITTI(Dataset):
         sequence_set = []
         for folder in self.train_seqs:
 
-            # poses_abs: (img_nums, 4, 4)      poses_rel: (img_nums-1, 6)
-            # poses_abs: SE(3)={R, t, 0, 1}     poses_rel:(θx, θy, θz, ρx, ρy, ρz)
+            # poses_abs: (img_nums, 4, 4)       poses_rel: (img_nums-1, 6)
+            # poses_abs_qua= {R, t, 0, 1}       poses_rel = (θx, θy, θz, ρx, ρy, ρz)
             poses_abs, poses_rel = read_pose_from_text(self.data_root / 'poses/{}.txt'.format(folder))
+
+            # poses_abs_qua: (img_nums, 4) with (qw, qx, qy, qz)
+            poses_abs_qua = poses_SE3_to_quaternion(poses_abs)
 
             # imus: ((img_nums-1)*IMU_FREQ + 1, 6)
             imus = sio.loadmat(self.data_root / 'imus/{}.mat'.format(folder))['imu_data_interp']
@@ -49,13 +51,21 @@ class KITTI(Dataset):
                 img_samples = fpaths[i:i + self.sequence_length]                    # img_samples: len(11)
                 imu_samples = imus[i * IMU_FREQ:(i + self.sequence_length - 1)
                                    * IMU_FREQ + 1]                                  # imu_samples: (101, 6)
-                pose_abs_samples = poses_abs[i:i + self.sequence_length]
+
+                # pose_abs_samples = poses_abs[i:i + self.sequence_length]
+                pose_abs_samples = poses_abs_qua[i:i + self.sequence_length]        # pose_abs_samples: (11, 4)
                 pose_rel_samples = poses_rel[i:i + self.sequence_length - 1]        # pose_rel_samples: (10, 6)
+
                 pose_error = np.dot(np.linalg.inv(pose_abs_samples[0]), pose_abs_samples[-1])
                 segment_rot = rotationError(pose_error)
 
-                # imgs: len(11),      imus: (101, 6),     gts: (10, 6),            rot: a real number
-                sample = {'imgs': img_samples, 'imus': imu_samples, 'gts': pose_rel_samples, 'rot': segment_rot}
+                sample = {
+                    'imgs': img_samples,                  # imgs: len(11)
+                    'imus': imu_samples,                  # imus: (101, 6)
+                    'abs_pose_gt': pose_abs_samples,      # abs_pose_gt: (11, 4)
+                    'rel_pose_gt': pose_rel_samples,      # rel_pose_gt: (10, 6)
+                    'rot': segment_rot                    # rot: a real number
+                }
                 sequence_set.append(sample)
 
         self.samples = sequence_set     # samples: len(17260) = len(4541-11) + len(1101-11) + ... + len(1591-11)
@@ -80,7 +90,8 @@ class KITTI(Dataset):
         return:
             imgs: (11, 3, H, W), or len(11): [img_path0, img_path1, ..., img_path_10]
             imus: (101, 6),
-            gts:  (10, 6),
+            abs_pose_gt:  (11, 4), absolute poses in quaternion from the first frame with [qw, qx, qy, qz]
+            rel_pose_gt:  (10, 6), relative poses in 6DoF between every two frame with [θx, θy, θz, ρx, ρy, ρz]
             rot:  a real number,
             weights: a real number
         '''
@@ -94,12 +105,13 @@ class KITTI(Dataset):
                 imgs = self.transform(np.asarray(imgs))
 
         imus = np.copy(sample['imus'])
-        gts = np.copy(sample['gts']).astype(np.float32)
+        abs_pose_gt = np.copy(sample['abs_pose_gt']).astype(np.float32)
+        rel_pose_gt = np.copy(sample['rel_pose_gt']).astype(np.float32)
 
         rot = sample['rot'].astype(np.float32)
         weight = self.weights[index]
 
-        return imgs, imus, gts, rot, weight
+        return imgs, imus, abs_pose_gt, rel_pose_gt, rot, weight
 
     def __len__(self):
         return len(self.samples)

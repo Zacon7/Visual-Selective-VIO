@@ -8,6 +8,7 @@ from PIL import Image
 import torchvision.transforms.functional as TF
 import matplotlib.pyplot as plt
 import math
+from pytorch3d.transforms import matrix_to_quaternion
 plt.switch_backend('agg')
 
 _EPS = np.finfo(float).eps * 4.0
@@ -220,20 +221,33 @@ def read_pose(line):
 
 
 def read_pose_from_text(path):
+    '''
+    Reading abs pose(SE3) and rel pose (R6) from text file
+    '''
     with open(path) as f:
         lines = [line.split('\n')[0] for line in f.readlines()]
         poses_rel, poses_abs = [], []
-        values_p = read_pose(lines[0])
-        poses_abs.append(values_p)
+        prev_pose = read_pose(lines[0])
+        poses_abs.append(prev_pose)
         for i in range(1, len(lines)):
-            values = read_pose(lines[i])
-            poses_rel.append(get_relative_pose_6DoF(values_p, values))
-            values_p = values.copy()
-            poses_abs.append(values)
+            curr_pose = read_pose(lines[i])
+            poses_rel.append(get_relative_pose_6DoF(prev_pose, curr_pose))
+            prev_pose = curr_pose.copy()
+            poses_abs.append(curr_pose)
         poses_abs = np.array(poses_abs)
         poses_rel = np.array(poses_rel)
-
     return poses_abs, poses_rel
+
+
+def poses_SE3_to_quaternion(poses):
+    '''
+    Convert a SE(3) Pose to Quaternion Pose
+    input:  poses: (n, 4, 4) in SE(3)
+    output: poses_qua: (n, 4) in quaternion
+    '''
+    rot_mat = torch.tensor(poses[:, :3, :3])
+    poses_qua = matrix_to_quaternion(rot_mat).numpy()
+    return poses_qua
 
 
 def saveSequence(poses, file_name):
@@ -242,3 +256,20 @@ def saveSequence(poses, file_name):
             pose = pose.flatten()[:12]
             f.write(' '.join([str(r) for r in pose]))
             f.write('\n')
+
+
+# if __name__ == '__main__':
+#     R = np.array([[-0.545, 0.797, 0.260, 0],
+#                   [0.733, 0.603, -0.313, 0],
+#                   [-0.407, 0.021, -0.913, 0],
+#                   [0, 0, 0, 1]])
+#     R = np.array([[0.395, 0.362, 0.843, 0],
+#                   [-0.626, 0.796, -0.056, 0],
+#                   [-0.677, -0.498, 0.529, 0],
+#                   [0, 0, 0, 1]])
+
+#     q1 = matrix_to_quaternion(torch.tensor(R[:3, :3])).numpy()
+#     q2 = from_rotation_matrix(R[:3, :3], False)
+
+#     print(q1)
+#     print(q2)

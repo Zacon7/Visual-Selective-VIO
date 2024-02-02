@@ -1,14 +1,11 @@
 import argparse
 import torch
-import logging
 from path import Path
-from utils import custom_transform
 from dataset.KITTI_dataset import KITTI
 from model import DeepVIO
 from collections import defaultdict
 from utils.kitti_eval import KITTI_tester
 import numpy as np
-import math
 
 parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument('--data_dir', type=str, default='./data', help='path to the dataset')
@@ -32,10 +29,10 @@ parser.add_argument('--rnn_dropout_out', type=float, default=0.2, help='dropout 
 parser.add_argument('--rnn_dropout_between', type=float, default=0.2, help='dropout within LSTM')
 
 parser.add_argument('--workers', type=int, default=8, help='number of workers')
-parser.add_argument('--experiment_name', type=str, default='test_model', help='experiment name')
-parser.add_argument('--ckpt_model', type=str, default='results/train/fastflow_hard_5e-5/checkpoints/best_12.04.pth',
+parser.add_argument('--experiment_name', type=str, default='flownet_ft_3.00_new', help='experiment name')
+parser.add_argument('--ckpt_model', type=str, default='results/train/flownet_hard_ft/checkpoints/best_3.00.pth',
                     help='path to the checkpoint model')
-parser.add_argument('--flow_encoder', type=str, default='fastflownet', help='choose to use the flownet or fastflownet')
+parser.add_argument('--flow_encoder', type=str, default='flownet', help='choose to use the flownet or fastflownet')
 parser.add_argument('--flownetBN', default=True, help='choose to use the flownetS or flownetS_BN')
 
 args = parser.parse_args()

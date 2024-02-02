@@ -48,11 +48,11 @@ parser.add_argument('--temp_init', type=float, default=5, help='initial temperat
 parser.add_argument('--alpha', type=float, default=100, help='weight to balance translational & rotational loss.')
 parser.add_argument('--Lambda', type=float, default=3e-5, help='penalty factor for the visual encoder usage')
 
-parser.add_argument('--experiment_name', type=str, default='fastflow_hard_flow6_ft', help='experiment name')
+parser.add_argument('--experiment_name', type=str, default='test_loss', help='experiment name')
 parser.add_argument('--load_cache', default=False, help='whether to load the dataset pickle cache')
 parser.add_argument('--pkl_path', type=str, default='./dataset/kitti.pkl', help='path to load the dataset pickle cache')
 
-parser.add_argument('--ckpt_model', type=str, default='results/train/fastflow_hard_flow6/checkpoints/best_6.56.pth', help='path to load the checkpoint')
+parser.add_argument('--ckpt_model', type=str, default=None, help='path to load the checkpoint')
 parser.add_argument('--flow_encoder', type=str, default='fastflownet', help='choose to use the flownet or fastflownet')
 parser.add_argument('--flownetBN', default=True, help='choose to use the flownetS or flownetS_BN')
 parser.add_argument('--pretrain_flownet', type=str, default='pretrain_models/fastflownet_ft_kitti.pth',
@@ -112,7 +112,7 @@ def train_epoch(model, optimizer, train_loader, image_cache, selection, temp, lo
     penalties = []
     data_len = len(train_loader)
 
-    for i, (imgs, imus, gts, rot, weights) in enumerate(train_loader):
+    for i, (imgs, imus, abs_pose_gt, rel_pose_gt, rot, weights) in enumerate(train_loader):
 
         if image_cache is not None:
             img_arrays = []
@@ -121,23 +121,25 @@ def train_epoch(model, optimizer, train_loader, image_cache, selection, temp, lo
                 img_arrays.append(torch.stack(batch_imgs, dim=0))   # len(11): batch, 3, H, W
             imgs = torch.stack(img_arrays, dim=1)
 
-        imgs = imgs.cuda(non_blocking=True).float()          # imgs: (batch, seq_len=11, 3, H, W)
-        imus = imus.cuda(non_blocking=True).float()          # imus: (batch, 101, 6)
-        gts = gts.cuda(non_blocking=True).float()            # gts:  (batch, 10, 6)
-        weights = weights.cuda(non_blocking=True).float()    # weights: (batch)
+        imgs = imgs.cuda(non_blocking=True).float()                 # imgs: (batch, seq_len=11, 3, H, W)
+        imus = imus.cuda(non_blocking=True).float()                 # imus: (batch, 101, 6)
+        abs_pose_gt = abs_pose_gt.cuda(non_blocking=True).float()   # abs_pose_gt:  (batch, 11, 4)
+        rel_pose_gt = rel_pose_gt.cuda(non_blocking=True).float()   # rel_pose_gt:  (batch, 10, 6)
+        weights = weights.cuda(non_blocking=True).float()           # weights: (batch)
 
         optimizer.zero_grad()
         rel_poses, decisions, probs, _ = model(imgs, imus, is_first=True, hc=None, temp=temp, selection=selection, p=p)
         # rel_poses: (batch, 10, 6);     decisions: (batch, 9, 2);       probs : (batch, 9, 2)
-
-        # rel_poses, gt_poses = (θx, θy, θz, ρx, ρy, ρz)
+        
+        # abs_pose_gt = (qw, qx, qy, qz)
+        # rel_poses, rel_pose_gt = (θx, θy, θz, ρx, ρy, ρz)
         if not weighted:
-            angle_loss = torch.nn.functional.mse_loss(rel_poses[:, :, :3], gts[:, :, :3])
-            translation_loss = torch.nn.functional.mse_loss(rel_poses[:, :, 3:], gts[:, :, 3:])
+            angle_loss = torch.nn.functional.mse_loss(rel_poses[:, :, :3], rel_pose_gt[:, :, :3])
+            translation_loss = torch.nn.functional.mse_loss(rel_poses[:, :, 3:], rel_pose_gt[:, :, 3:])
         else:
             weights = weights / weights.sum()
-            angle_loss = (weights.unsqueeze(-1).unsqueeze(-1) * (rel_poses[:, :, :3] - gts[:, :, :3]) ** 2).mean()
-            translation_loss = (weights.unsqueeze(-1).unsqueeze(-1) * (rel_poses[:, :, 3:] - gts[:, :, 3:]) ** 2).mean()
+            angle_loss = (weights.unsqueeze(-1).unsqueeze(-1) * (rel_poses[:, :, :3] - rel_pose_gt[:, :, :3]) ** 2).mean()
+            translation_loss = (weights.unsqueeze(-1).unsqueeze(-1) * (rel_poses[:, :, 3:] - rel_pose_gt[:, :, 3:]) ** 2).mean()
 
         pose_loss = translation_loss + args.alpha * angle_loss
         penalty_loss = (decisions[:, :, 0].float()).sum(-1).mean()  # 平均每个bach每段时序上使用了视觉特征的次数

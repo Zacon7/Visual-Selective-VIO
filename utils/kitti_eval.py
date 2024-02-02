@@ -1,13 +1,10 @@
-import os
 import glob
 import numpy as np
-import time
 import scipy.io as sio
 import torch
 from PIL import Image
 import torchvision.transforms.functional as TF
 import matplotlib.pyplot as plt
-import math
 from utils.utils import *
 from tqdm import tqdm
 
@@ -26,22 +23,22 @@ class data_partition():
         imu_dir = self.data_dir + '/imus/'
         pose_dir = self.data_dir + '/poses/'
 
-        # img_paths: len(2761)      imus: (27601, 6)      poses: (2761, 4,4)  poses_rel: (2760, 6)
+        # img_paths: len(2761)    imus: (27601, 6)    abs_pose_gt: (2761, 4, 4)    rel_pose_gt: (2760, 6)
         self.img_paths = glob.glob('{}{}/image_2/*.png'.format(image_dir, self.folder))
         self.imus = sio.loadmat('{}{}.mat'.format(imu_dir, self.folder))['imu_data_interp']
-        self.poses, self.poses_rel = read_pose_from_text('{}{}.txt'.format(pose_dir, self.folder))
+        self.abs_pose_gt, self.rel_pose_gt = read_pose_from_text('{}{}.txt'.format(pose_dir, self.folder))
         self.img_paths.sort()
 
         self.img_paths_list, self.poses_list, self.imus_list = [], [], []
         start = 0
         n_frames = len(self.img_paths)
         while start + self.seq_len < n_frames:
-            self.img_paths_list.append(self.img_paths[start:start + self.seq_len])  # append: len(11)
-            self.poses_list.append(self.poses_rel[start:start + self.seq_len - 1])  # append: (10, 6)
+            self.img_paths_list.append(self.img_paths[start:start + self.seq_len])      # append: len(11)
+            self.poses_list.append(self.rel_pose_gt[start:start + self.seq_len - 1])    # append: (10, 6)
             self.imus_list.append(self.imus[start * 10:(start + self.seq_len - 1) * 10 + 1])    # append: (101, 6)
             start += self.seq_len - 1
         self.img_paths_list.append(self.img_paths[start:])  # len(276), with image seires len(11)
-        self.poses_list.append(self.poses_rel[start:])      # len(276), with rel_pose(10, 6)
+        self.poses_list.append(self.rel_pose_gt[start:])    # len(276), with rel_pose(10, 6)
         self.imus_list.append(self.imus[start * 10:])       # len(276), with imus (101, 6)
 
     def __len__(self):
@@ -58,8 +55,8 @@ class data_partition():
             image_sequence.append(img_as_tensor)
         image_sequence = torch.cat(image_sequence, 0)           # image_sequence: (11, 3, 256, 512)
         imu_sequence = torch.FloatTensor(self.imus_list[i])     # imu_sequence: (101, 6)
-        gt_sequence = self.poses_list[i][:, :6]                 # gt_sequence: (10, 6)
-        return image_sequence, imu_sequence, gt_sequence
+        # gt_sequence = self.poses_list[i][:, :6]                 # gt_sequence: (10, 6)
+        return image_sequence, imu_sequence
 
 
 class KITTI_tester():
@@ -76,7 +73,7 @@ class KITTI_tester():
     def test_one_path(self, net, data_path, selection, num_gpu=1, p=0.5):
         hc = None
         pose_list, decision_list, probs_list = [], [], []
-        for i, (image_seq, imu_seq, gt_seq) in tqdm(enumerate(data_path), total=len(data_path), smoothing=0.9):
+        for i, (image_seq, imu_seq) in tqdm(enumerate(data_path), total=len(data_path), smoothing=0.9):
             x_in = image_seq.unsqueeze(0).repeat(num_gpu, 1, 1, 1, 1).cuda()    # x_in: (1, 11, 3, 256, 512)
             i_in = imu_seq.unsqueeze(0).repeat(num_gpu, 1, 1).cuda()            # i_in: (1, 101, 6)
             with torch.no_grad():
@@ -94,13 +91,13 @@ class KITTI_tester():
         self.errors = []
         for i, seq in enumerate(self.args.val_seq):
             print(f'testing sequence {seq}')
-            pose_est, dec_est, prob_est = self.test_one_path(net, self.dataloader[i], selection, num_gpu=num_gpu, p=p)
-            # pose_est:(2760, 6)   dec_est:(2759,)   prob_est:(2759, 2)
+            rel_pose_est, dec_est, prob_est = self.test_one_path(net, self.dataloader[i], selection, num_gpu=num_gpu, p=p)
+            # rel_pose_est:(2760, 6)   dec_est:(2759,)   prob_est:(2759, 2)
 
-            pose_est_global, pose_gt_global, t_rel, r_rel, t_rmse, r_rmse, usage, speed = kitti_eval(
-                pose_est, self.dataloader[i].poses_rel, dec_est)
+            abs_pose_est, abs_pose_gt, t_rel, r_rel, t_rmse, r_rmse, usage, speed = kitti_eval(
+                rel_pose_est, self.dataloader[i].rel_pose_gt, self.dataloader[i].abs_pose_gt, dec_est)
 
-            self.est.append({'pose_est_global': pose_est_global, 'pose_gt_global': pose_gt_global,
+            self.est.append({'abs_pose_est': abs_pose_est, 'abs_pose_gt': abs_pose_gt,
                             'decs': dec_est, 'probs': prob_est, 'speed': speed})
             self.errors.append({'t_rel': t_rel, 'r_rel': r_rel, 't_rmse': t_rmse, 'r_rmse': r_rmse, 'usage': usage})
 
@@ -109,8 +106,8 @@ class KITTI_tester():
     def generate_plots(self, save_dir, window_size):
         for i, seq in enumerate(self.args.val_seq):
             plotPath_2D(seq,
-                        self.est[i]['pose_gt_global'],
-                        self.est[i]['pose_est_global'],
+                        self.est[i]['abs_pose_gt'],
+                        self.est[i]['abs_pose_est'],
                         save_dir,
                         self.est[i]['decs'],
                         self.est[i]['speed'],
@@ -119,15 +116,16 @@ class KITTI_tester():
     def save_text(self, save_dir):
         for i, seq in enumerate(self.args.val_seq):
             path = save_dir / '{}_pred.txt'.format(seq)
-            saveSequence(self.est[i]['pose_est_global'], path)
+            saveSequence(self.est[i]['abs_pose_est'], path)
             print('Seq {} saved'.format(seq))
 
 
-def kitti_eval(rel_pose_est, rel_pose_gt, dec_est):
+def kitti_eval(rel_pose_est, rel_pose_gt, abs_pose_mat_gt, dec_est):
     '''
     input:
         rel_pose_est: (2760, 6), estimation Relative pose in R6 throughout the trajectory
         rel_pose_gt:  (2760, 6), ground-truth Relative pose in R6 throughout the trajectory
+        abs_pose_mat_gt:  (2761, 4, 4), ground-truth Absolute pose in SE(3) throughout the trajectory
         dec_est: (2759,), The decision at every time step except the first frame throughout the trajectory
     return:
         abs_pose_mat_est: len(2761) with estimated Absolute pose in 4x4 matrix SE(3), starting from the first frame
@@ -146,10 +144,10 @@ def kitti_eval(rel_pose_est, rel_pose_gt, dec_est):
 
     # Transfer R6 relative pose to 4x4 absolute pose matrix SE(3)
     abs_pose_mat_est = path_accu(rel_pose_est)
-    abs_pose_mat_gt = path_accu(rel_pose_gt)
+    # abs_pose_mat_gt = path_accu(rel_pose_gt)
 
     # Using KITTI metric
-    err_list, t_rel, r_rel, speed = kitti_metric_eval(abs_pose_mat_est, abs_pose_mat_gt)
+    err_list, t_rel, r_rel, speed = kitti_metric(abs_pose_mat_est, abs_pose_mat_gt)
 
     # Convert errors to percentage and Convert rotation error from radians to angles
     t_rel = t_rel * 100
@@ -160,7 +158,7 @@ def kitti_eval(rel_pose_est, rel_pose_gt, dec_est):
     return abs_pose_mat_est, abs_pose_mat_gt, t_rel, r_rel, t_rmse, r_rmse, usage, speed
 
 
-def kitti_metric_eval(abs_pose_est, abs_pose_gt):
+def kitti_metric(abs_pose_est, abs_pose_gt):
     '''
     Traverse all the poses at both ends of the fixed distance, and calculate their errors.
     input:
