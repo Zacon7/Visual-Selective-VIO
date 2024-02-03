@@ -97,19 +97,31 @@ def eulerAnglesToRotationMatrix(theta):
     '''
     Calculate the rotation matrix R from eular angles (roll, yaw, pitch)
     '''
-    R_x = np.array([[1, 0, 0],
-                    [0, np.cos(theta[0]), -np.sin(theta[0])],
-                    [0, np.sin(theta[0]), np.cos(theta[0])]
-                    ])
-    R_y = np.array([[np.cos(theta[1]), 0, np.sin(theta[1])],
-                    [0, 1, 0],
-                    [-np.sin(theta[1]), 0, np.cos(theta[1])]
-                    ])
-    R_z = np.array([[np.cos(theta[2]), -np.sin(theta[2]), 0],
-                    [np.sin(theta[2]), np.cos(theta[2]), 0],
-                    [0, 0, 1]
-                    ])
-    R = np.dot(R_z, np.dot(R_y, R_x))
+    if torch.is_tensor(theta):
+        R_x = torch.tensor([[1, 0, 0],
+                            [0, torch.cos(theta[0]), -torch.sin(theta[0])],
+                            [0, torch.sin(theta[0]), torch.cos(theta[0])]])
+        R_y = torch.tensor([[torch.cos(theta[1]), 0, torch.sin(theta[1])],
+                            [0, 1, 0],
+                            [-torch.sin(theta[1]), 0, torch.cos(theta[1])]])
+        R_z = torch.tensor([[torch.cos(theta[2]), -torch.sin(theta[2]), 0],
+                            [torch.sin(theta[2]), torch.cos(theta[2]), 0],
+                            [0, 0, 1]])
+        R = torch.matmul(R_z, torch.matmul(R_y, R_x))
+    else:
+        R_x = np.array([[1, 0, 0],
+                        [0, np.cos(theta[0]), -np.sin(theta[0])],
+                        [0, np.sin(theta[0]), np.cos(theta[0])]
+                        ])
+        R_y = np.array([[np.cos(theta[1]), 0, np.sin(theta[1])],
+                        [0, 1, 0],
+                        [-np.sin(theta[1]), 0, np.cos(theta[1])]
+                        ])
+        R_z = np.array([[np.cos(theta[2]), -np.sin(theta[2]), 0],
+                        [np.sin(theta[2]), np.cos(theta[2]), 0],
+                        [0, 0, 1]
+                        ])
+        R = np.dot(R_z, np.dot(R_y, R_x))
     return R
 
 
@@ -128,10 +140,17 @@ def pose_6DoF_to_matrix(pose):
     '''
     Calculate the 4x4 transformation matrix SE(3) from Eular angles and translation vector R6
     '''
-    R = eulerAnglesToRotationMatrix(pose[:3])
-    t = pose[3:].reshape(3, 1)
-    R = np.concatenate((R, t), 1)
-    R = np.concatenate((R, np.array([[0, 0, 0, 1]])), 0)
+    if torch.is_tensor(pose):
+        R = eulerAnglesToRotationMatrix(pose[:3])
+        t = pose[3:].view(3, 1)
+        R = torch.cat((R, t), 1)
+        R = torch.cat((R, torch.tensor([[0, 0, 0, 1]])), 0)
+        return R
+    else:
+        R = eulerAnglesToRotationMatrix(pose[:3])
+        t = pose[3:].reshape(3, 1)
+        R = np.concatenate((R, t), 1)
+        R = np.concatenate((R, np.array([[0, 0, 0, 1]])), 0)
     return R
 
 
@@ -147,11 +166,18 @@ def path_accu(rel_pose):
     '''
     Generate the global pose matrices from a series of relative poses
     '''
-    global_poses = [np.eye(4)]
-    for index in range(rel_pose.shape[0]):
-        curr_pose = pose_accu(global_poses[-1], rel_pose[index, :])
-        global_poses.append(curr_pose)
-    return global_poses
+    if torch.is_tensor(rel_pose):
+        global_poses = [torch.eye(4)]
+        for index in range(rel_pose.shape[0]):
+            curr_pose = pose_accu(global_poses[-1], rel_pose[index, :])
+            global_poses.append(curr_pose)
+        return torch.stack(global_poses, dim=0)
+    else:
+        global_poses = [np.eye(4)]
+        for index in range(rel_pose.shape[0]):
+            curr_pose = pose_accu(global_poses[-1], rel_pose[index, :])
+            global_poses.append(curr_pose)
+        return global_poses
 
 
 def moving_average(x, w):
@@ -273,3 +299,10 @@ def saveSequence(poses, file_name):
 
 #     print(q1)
 #     print(q2)
+
+# qua_pred[i,]=w0,x0,y0,z0
+# qua_true[i,]=w1,x1,y1,z1
+# w0w1 − x0x1 − y0y1 − z0z1
+# w0x1 + x0w1 + y0z1 − z0y1
+# w0y1 − x0z1 + y0w1 + z0x1
+# w0z1 + x0y1 − y0x1 + z0w1

@@ -4,6 +4,8 @@ import logging
 from path import Path
 from functools import lru_cache
 from utils import custom_transform
+from utils.utils import path_accu
+from pytorch3d.transforms import matrix_to_quaternion, quaternion_invert, quaternion_multiply
 from dataset.KITTI_dataset import KITTI
 from model import DeepVIO
 from utils.kitti_eval import KITTI_tester
@@ -112,36 +114,76 @@ def train_epoch(model, optimizer, train_loader, image_cache, selection, temp, lo
     penalties = []
     data_len = len(train_loader)
 
-    for i, (imgs, imus, abs_pose_gt, rel_pose_gt, rot, weights) in enumerate(train_loader):
+    for i, (imgs, imus, rel_pose_gt, rot, weights) in enumerate(train_loader):
+        '''
+            imgs: (batch, seq_len=11, 3, H, W)
+            imus: (batch, 101, 6)
+            rel_pose_gt:  (batch, 10, 6)
+            weights: len(batch)
+        '''
 
         if image_cache is not None:
             img_arrays = []
             for seq_imgs in imgs:
                 batch_imgs = [image_cache.load_image(img_path) for img_path in seq_imgs]   # len(batch): 3, H, W
-                img_arrays.append(torch.stack(batch_imgs, dim=0))   # len(11): batch, 3, H, W
+                img_arrays.append(torch.stack(batch_imgs, dim=0))                          # len(11): batch, 3, H, W
             imgs = torch.stack(img_arrays, dim=1)
 
         imgs = imgs.cuda(non_blocking=True).float()                 # imgs: (batch, seq_len=11, 3, H, W)
         imus = imus.cuda(non_blocking=True).float()                 # imus: (batch, 101, 6)
-        abs_pose_gt = abs_pose_gt.cuda(non_blocking=True).float()   # abs_pose_gt:  (batch, 11, 4)
-        rel_pose_gt = rel_pose_gt.cuda(non_blocking=True).float()   # rel_pose_gt:  (batch, 10, 6)
-        weights = weights.cuda(non_blocking=True).float()           # weights: (batch)
+        # weights = weights.cuda(non_blocking=True).float()         # weights: len(batch)
 
         optimizer.zero_grad()
-        rel_poses, decisions, probs, _ = model(imgs, imus, is_first=True, hc=None, temp=temp, selection=selection, p=p)
-        # rel_poses: (batch, 10, 6);     decisions: (batch, 9, 2);       probs : (batch, 9, 2)
-        
-        # abs_pose_gt = (qw, qx, qy, qz)
-        # rel_poses, rel_pose_gt = (θx, θy, θz, ρx, ρy, ρz)
+
+        # rel_pose_est: (batch, 10, 6);     decisions: (batch, 9, 2);       probs : (batch, 9, 2)
+        rel_pose_est, decisions, probs, _ = model(
+            imgs, imus, is_first=True, hc=None, temp=temp, selection=selection, p=p)
+
+        # Move data to cpu
+        rel_pose_est = rel_pose_est.cpu()
+
+        # Compute absolute pose matrix SE(3), (batch, 11, 4, 4)
+        abs_pose_est = [path_accu(rel_pose_est[i, :, :]) for i in range(rel_pose_est.shape[0])]
+        abs_pose_est = torch.stack(abs_pose_est, dim=0).cuda(non_blocking=True).float()
+
+        abs_pose_gt = [path_accu(rel_pose_gt[i, :, :]) for i in range(rel_pose_gt.shape[0])]
+        abs_pose_gt = torch.stack(abs_pose_gt, dim=0).cuda(non_blocking=True).float()
+
+        # Compute absolute pose error between estimation and ground-truth, SE3(batch, 11, 4, 4)
+        abs_pose_error = torch.inverse(abs_pose_est) @ abs_pose_gt
+
+        # Convert SE3 error(batch, 11, 4, 4) to quaternion error(batch, 11, 4)
+        abs_qua_error = matrix_to_quaternion(abs_pose_error[:, :, :3, :3])
+
+        # Compute quaternion error from quaternion
+        # abs_qua_est = matrix_to_quaternion(abs_pose_est[:, :, :3, :3])
+        # abs_qua_gt = matrix_to_quaternion(abs_pose_gt[:, :, :3, :3])
+        # abs_qua_error = quaternion_multiply(quaternion_invert(abs_qua_est), abs_qua_gt)
+
+        # Move data to gpu
+        rel_pose_est = rel_pose_est.cuda(non_blocking=True).float()
+        rel_pose_gt = rel_pose_gt.cuda(non_blocking=True).float()
+
+        # Compute relative pose loss and absolute pose loss
         if not weighted:
-            angle_loss = torch.nn.functional.mse_loss(rel_poses[:, :, :3], rel_pose_gt[:, :, :3])
-            translation_loss = torch.nn.functional.mse_loss(rel_poses[:, :, 3:], rel_pose_gt[:, :, 3:])
+            rel_rot_loss = torch.nn.functional.mse_loss(rel_pose_est[:, :, :3], rel_pose_gt[:, :, :3])
+            rel_trans_loss = torch.nn.functional.mse_loss(rel_pose_est[:, :, 3:], rel_pose_gt[:, :, 3:])
+            rel_pose_loss = rel_trans_loss + args.alpha * rel_rot_loss
+
+            theta_error = abs_qua_error[:, :, 0]            # (batch, 11)
+            angle_error = 2 * torch.arccos(theta_error)     # (batch, 11)
+            abs_rot_loss = torch.mean(angle_error)
+            abs_trans_loss = torch.nn.functional.mse_loss(abs_pose_est[:, :, :3, 3], abs_pose_gt[:, :, :3, 3])
+            abs_pose_loss = abs_trans_loss + args.alpha * abs_rot_loss
+
         else:
             weights = weights / weights.sum()
-            angle_loss = (weights.unsqueeze(-1).unsqueeze(-1) * (rel_poses[:, :, :3] - rel_pose_gt[:, :, :3]) ** 2).mean()
-            translation_loss = (weights.unsqueeze(-1).unsqueeze(-1) * (rel_poses[:, :, 3:] - rel_pose_gt[:, :, 3:]) ** 2).mean()
+            rel_rot_loss = (weights.unsqueeze(-1).unsqueeze(-1)
+                            * (rel_pose_est[:, :, :3] - rel_pose_gt[:, :, :3]) ** 2).mean()
+            rel_trans_loss = (weights.unsqueeze(-1).unsqueeze(-1) *
+                              (rel_pose_est[:, :, 3:] - rel_pose_gt[:, :, 3:]) ** 2).mean()
 
-        pose_loss = translation_loss + args.alpha * angle_loss
+        pose_loss = rel_pose_loss + abs_pose_loss
         penalty_loss = (decisions[:, :, 0].float()).sum(-1).mean()  # 平均每个bach每段时序上使用了视觉特征的次数
         total_loss = pose_loss + args.Lambda * penalty_loss
 
@@ -262,8 +304,8 @@ def main():
     model = torch.nn.DataParallel(model, device_ids=gpu_ids)
 
     # Initialize or restore the training epoch
-    init_epoch = int(args.ckpt_model[-7:-4]) + 1 if args.ckpt_model is not None else 0
-    # init_epoch = 60
+    # init_epoch = int(args.ckpt_model[-7:-4]) + 1 if args.ckpt_model is not None else 0
+    init_epoch = 80
 
     # Initialize the optimizer
     if args.optimizer == 'SGD':

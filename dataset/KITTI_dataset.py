@@ -35,11 +35,11 @@ class KITTI(Dataset):
         for folder in self.train_seqs:
 
             # poses_abs: (img_nums, 4, 4)       poses_rel: (img_nums-1, 6)
-            # poses_abs_qua= {R, t, 0, 1}       poses_rel = (θx, θy, θz, ρx, ρy, ρz)
+            # poses_abs= {R, t, 0, 1}           poses_rel = (θx, θy, θz, ρx, ρy, ρz)
             poses_abs, poses_rel = read_pose_from_text(self.data_root / 'poses/{}.txt'.format(folder))
 
             # poses_abs_qua: (img_nums, 4) with (qw, qx, qy, qz)
-            poses_abs_qua = poses_SE3_to_quaternion(poses_abs)
+            # poses_abs_qua = poses_SE3_to_quaternion(poses_abs)
 
             # imus: ((img_nums-1)*IMU_FREQ + 1, 6)
             imus = sio.loadmat(self.data_root / 'imus/{}.mat'.format(folder))['imu_data_interp']
@@ -52,8 +52,8 @@ class KITTI(Dataset):
                 imu_samples = imus[i * IMU_FREQ:(i + self.sequence_length - 1)
                                    * IMU_FREQ + 1]                                  # imu_samples: (101, 6)
 
-                # pose_abs_samples = poses_abs[i:i + self.sequence_length]
-                pose_abs_samples = poses_abs_qua[i:i + self.sequence_length]        # pose_abs_samples: (11, 4)
+                # pose_abs_samples = poses_abs_qua[i:i + self.sequence_length]        # pose_abs_samples: (11, 4)
+                pose_abs_samples = poses_abs[i:i + self.sequence_length]            # pose_abs_samples: (11, 4, 4)
                 pose_rel_samples = poses_rel[i:i + self.sequence_length - 1]        # pose_rel_samples: (10, 6)
 
                 pose_error = np.dot(np.linalg.inv(pose_abs_samples[0]), pose_abs_samples[-1])
@@ -62,7 +62,7 @@ class KITTI(Dataset):
                 sample = {
                     'imgs': img_samples,                  # imgs: len(11)
                     'imus': imu_samples,                  # imus: (101, 6)
-                    'abs_pose_gt': pose_abs_samples,      # abs_pose_gt: (11, 4)
+                    'abs_pose_gt': pose_abs_samples,      # abs_pose_gt: (11, 4, 4) or (11, 4)
                     'rel_pose_gt': pose_rel_samples,      # rel_pose_gt: (10, 6)
                     'rot': segment_rot                    # rot: a real number
                 }
@@ -90,6 +90,8 @@ class KITTI(Dataset):
         return:
             imgs: (11, 3, H, W), or len(11): [img_path0, img_path1, ..., img_path_10]
             imus: (101, 6),
+            abs_pose_gt:  (11, 4, 4), absolute poses in SE(3) from the first frame with {R, t, 0, 1}
+                or
             abs_pose_gt:  (11, 4), absolute poses in quaternion from the first frame with [qw, qx, qy, qz]
             rel_pose_gt:  (10, 6), relative poses in 6DoF between every two frame with [θx, θy, θz, ρx, ρy, ρz]
             rot:  a real number,
@@ -111,7 +113,7 @@ class KITTI(Dataset):
         rot = sample['rot'].astype(np.float32)
         weight = self.weights[index]
 
-        return imgs, imus, abs_pose_gt, rel_pose_gt, rot, weight
+        return imgs, imus, rel_pose_gt, rot, weight
 
     def __len__(self):
         return len(self.samples)

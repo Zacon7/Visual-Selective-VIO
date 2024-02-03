@@ -187,7 +187,7 @@ def kitti_metric(abs_pose_est, abs_pose_gt):
             if j == -1 or j >= len(abs_pose_est) or i >= len(abs_pose_est):
                 continue
 
-            # Calculate the ground-truth and estimated Relative pose SE(3) from end to end
+            # Calculate the Relative pose error between ground-truth and estimation from end to end
             pose_delta_gt = np.dot(np.linalg.inv(abs_pose_gt[i]), abs_pose_gt[j])
             pose_delta_est = np.dot(np.linalg.inv(abs_pose_est[i]), abs_pose_est[j])
             pose_error = np.dot(np.linalg.inv(pose_delta_est), pose_delta_gt)
