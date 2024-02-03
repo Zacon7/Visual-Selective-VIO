@@ -35,22 +35,25 @@ parser.add_argument('--rnn_dropout_out', type=float, default=0.2, help='dropout 
 parser.add_argument('--rnn_dropout_between', type=float, default=0.2, help='dropout within LSTM')
 
 parser.add_argument('--weight_decay', type=float, default=1e-5, help='weight decay for the optimizer')
-parser.add_argument('--batch_size', type=int, default=4, help='batch size')
+parser.add_argument('--batch_size', type=int, default=32, help='batch size')
 parser.add_argument('--seq_len', type=int, default=11, help='sequence length for LSTM')
 parser.add_argument('--workers', type=int, default=6, help='number of workers')
 parser.add_argument('--optimizer', type=str, default='Adam', help='type of optimizer [Adam, SGD]')
+
 parser.add_argument('--epochs_warmup', type=int, default=40, help='number of epochs for warmup')
 parser.add_argument('--epochs_joint', type=int, default=40, help='number of epochs for joint training')
 parser.add_argument('--epochs_fine', type=int, default=20, help='number of epochs for finetuning')
-parser.add_argument('--lr_warmup', type=float, default=3e-4, help='learning rate for warming up stage')
+parser.add_argument('--lr_warmup', type=float, default=1e-4, help='learning rate for warming up stage')
 parser.add_argument('--lr_joint', type=float, default=3e-5, help='learning rate for joint training stage')
 parser.add_argument('--lr_fine', type=float, default=2e-5, help='learning rate for finetuning stage')
 parser.add_argument('--eta', type=float, default=0.05, help='exponential decay factor for temperature')
 parser.add_argument('--temp_init', type=float, default=5, help='initial temperature for gumbel-softmax')
-parser.add_argument('--alpha', type=float, default=100, help='weight to balance translational & rotational loss.')
+
+parser.add_argument('--alpha', type=float, default=100, help='weight to balance relative translational & rotational loss.')
+parser.add_argument('--beta', type=float, default=0.01, help='weight to balance relative & absolute pose loss.')
 parser.add_argument('--Lambda', type=float, default=3e-5, help='penalty factor for the visual encoder usage')
 
-parser.add_argument('--experiment_name', type=str, default='test_loss', help='experiment name')
+parser.add_argument('--experiment_name', type=str, default='fastflow_jointloss', help='experiment name')
 parser.add_argument('--load_cache', default=False, help='whether to load the dataset pickle cache')
 parser.add_argument('--pkl_path', type=str, default='./dataset/kitti.pkl', help='path to load the dataset pickle cache')
 
@@ -164,17 +167,18 @@ def train_epoch(model, optimizer, train_loader, image_cache, selection, temp, lo
         rel_pose_est = rel_pose_est.cuda(non_blocking=True).float()
         rel_pose_gt = rel_pose_gt.cuda(non_blocking=True).float()
 
-        # Compute relative pose loss and absolute pose loss
         if not weighted:
+            # Compute relative pose Loss
             rel_rot_loss = torch.nn.functional.mse_loss(rel_pose_est[:, :, :3], rel_pose_gt[:, :, :3])
             rel_trans_loss = torch.nn.functional.mse_loss(rel_pose_est[:, :, 3:], rel_pose_gt[:, :, 3:])
             rel_pose_loss = rel_trans_loss + args.alpha * rel_rot_loss
 
-            theta_error = abs_qua_error[:, :, 0]            # (batch, 11)
-            angle_error = 2 * torch.arccos(theta_error)     # (batch, 11)
+            # Compute absolute pose Loss
+            theta_error = torch.clamp(abs_qua_error[:, :, 0], min=-1, max=1)    # (batch, 11)
+            angle_error = 2 * torch.arccos(theta_error)                         # (batch, 11)
             abs_rot_loss = torch.mean(angle_error)
-            abs_trans_loss = torch.nn.functional.mse_loss(abs_pose_est[:, :, :3, 3], abs_pose_gt[:, :, :3, 3])
-            abs_pose_loss = abs_trans_loss + args.alpha * abs_rot_loss
+            abs_trans_loss = torch.sqrt(torch.nn.functional.mse_loss(abs_pose_est[:, :, :3, 3], abs_pose_gt[:, :, :3, 3]))
+            abs_pose_loss = abs_trans_loss + 0.1 * args.alpha * abs_rot_loss
 
         else:
             weights = weights / weights.sum()
@@ -183,7 +187,7 @@ def train_epoch(model, optimizer, train_loader, image_cache, selection, temp, lo
             rel_trans_loss = (weights.unsqueeze(-1).unsqueeze(-1) *
                               (rel_pose_est[:, :, 3:] - rel_pose_gt[:, :, 3:]) ** 2).mean()
 
-        pose_loss = rel_pose_loss + abs_pose_loss
+        pose_loss = rel_pose_loss + args.beta * abs_pose_loss
         penalty_loss = (decisions[:, :, 0].float()).sum(-1).mean()  # 平均每个bach每段时序上使用了视觉特征的次数
         total_loss = pose_loss + args.Lambda * penalty_loss
 
@@ -191,10 +195,12 @@ def train_epoch(model, optimizer, train_loader, image_cache, selection, temp, lo
         optimizer.step()
 
         if i % args.print_frequency == 0:
-            message = f'Epoch: {ep}, batch: {i}/{data_len}, '\
-                      f'pose_loss: {pose_loss.item():.6f}, '\
-                      f'penalty_loss: {penalty_loss.item():.6f}, '\
-                      f'total loss: {total_loss.item():.6f}'
+            message = f'Epoch: {ep}, batch: {i}/{data_len},\t' \
+                    f'rel_pose_loss: {rel_pose_loss.item():.6f},\t' \
+                    f'abs_pose_loss: {abs_pose_loss.item():.6f},\t' \
+                    f'pose_loss: {pose_loss.item():.6f},\t' \
+                    f'penalty_loss: {penalty_loss.item():.6f},\t ' \
+                    f'total loss: {total_loss.item():.6f}'
             print(message)
             logger.info(message)
 
