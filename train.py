@@ -21,24 +21,23 @@ parser.add_argument('--save_dir', type=str, default='./results', help='path to s
 parser.add_argument('--train_seq', type=list, default=['00', '01', '02', '04', '06', '08', '09'],
                     help='sequences for training')
 parser.add_argument('--val_seq', type=list, default=['05', '07', '10'], help='sequences for validation')
-parser.add_argument('--seed', type=int, default=0, help='random seed')
+parser.add_argument('--seed', type=int, default=3407, help='random seed')
 
 parser.add_argument('--img_h', type=int, default=256, help='image height')
 parser.add_argument('--img_w', type=int, default=512, help='image width')
 parser.add_argument('--v_f_len', type=int, default=512, help='visual feature length')
 parser.add_argument('--i_f_len', type=int, default=256, help='imu feature length')
-parser.add_argument('--fuse_method', type=str, default='hard', help='fusion method [cat, soft, hard]')
 parser.add_argument('--imu_dropout', type=float, default=0, help='dropout for the IMU encoder')
+parser.add_argument('--fuse_method', type=str, default='hard', help='fusion method [cat, soft, hard]')
 
 parser.add_argument('--rnn_hidden_size', type=int, default=1024, help='size of the LSTM latent')
 parser.add_argument('--rnn_dropout_out', type=float, default=0.2, help='dropout for the LSTM output layer')
 parser.add_argument('--rnn_dropout_between', type=float, default=0.2, help='dropout within LSTM')
 
-parser.add_argument('--weight_decay', type=float, default=1e-5, help='weight decay for the optimizer')
 parser.add_argument('--batch_size', type=int, default=32, help='batch size')
 parser.add_argument('--seq_len', type=int, default=11, help='sequence length for LSTM')
-parser.add_argument('--workers', type=int, default=6, help='number of workers')
 parser.add_argument('--optimizer', type=str, default='Adam', help='type of optimizer [Adam, SGD]')
+parser.add_argument('--weight_decay', type=float, default=1e-4, help='weight decay for the optimizer')
 
 parser.add_argument('--epochs_warmup', type=int, default=40, help='number of epochs for warmup')
 parser.add_argument('--epochs_joint', type=int, default=40, help='number of epochs for joint training')
@@ -47,16 +46,17 @@ parser.add_argument('--epochs_fine', type=int, default=20, help='number of epoch
 parser.add_argument('--lr_warmup', type=float, default=3e-4, help='learning rate for warming up stage')
 parser.add_argument('--lr_joint', type=float, default=3e-5, help='learning rate for joint training stage')
 parser.add_argument('--lr_fine', type=float, default=2e-5, help='learning rate for finetuning stage')
-parser.add_argument('--eta', type=float, default=0.05, help='exponential decay factor for temperature')
-parser.add_argument('--temp_init', type=float, default=5, help='initial temperature for gumbel-softmax')
 
 parser.add_argument('--alpha', type=float, default=100, help='weight to balance relative translational & rotational loss.')
-parser.add_argument('--beta', type=float, default=0.1, help='weight to balance relative & absolute pose loss.')
+parser.add_argument('--beta', type=float, default=0.05, help='weight to balance relative & absolute pose loss.')
 parser.add_argument('--Lambda', type=float, default=3e-5, help='penalty factor for the visual encoder usage')
+parser.add_argument('--eta', type=float, default=0.05, help='exponential decay factor for temperature')
+parser.add_argument('--temp_init', type=float, default=5, help='initial temperature for gumbel-softmax')
 
 parser.add_argument('--experiment_name', type=str, default='fastflow_jointloss', help='experiment name')
 parser.add_argument('--load_cache', default=True, help='whether to load the dataset pickle cache')
 parser.add_argument('--pkl_path', type=str, default='./dataset/kitti.pkl', help='path to load the dataset pickle cache')
+parser.add_argument('--workers', type=int, default=6, help='number of workers')
 
 parser.add_argument('--ckpt_model', type=str, default=None, help='path to load the checkpoint')
 parser.add_argument('--flow_encoder', type=str, default='fastflownet', help='choose to use the flownet or fastflownet')
@@ -75,7 +75,7 @@ args = parser.parse_args()
 # Set the random seed
 torch.manual_seed(args.seed)
 np.random.seed(args.seed)
-
+eps = 1e-6
 
 class ImageCache:
     def __init__(self, image_cache):
@@ -153,16 +153,20 @@ def train_epoch(model, optimizer, train_loader, image_cache, selection, temp, lo
         abs_pose_gt = [path_accu(rel_pose_gt[i, :, :]) for i in range(rel_pose_gt.shape[0])]
         abs_pose_gt = torch.stack(abs_pose_gt, dim=0).cuda(non_blocking=True).float()
 
-        # # Compute absolute pose error between estimation and ground-truth, SE3(batch, 11, 4, 4)
-        # abs_pose_error = torch.inverse(abs_pose_est) @ abs_pose_gt
+        # Compute absolute pose error between estimation and ground-truth, SE3(batch, 11, 4, 4)
+        abs_pose_error = torch.inverse(abs_pose_est) @ abs_pose_gt
 
-        # # Convert SE3 error(batch, 11, 4, 4) to quaternion error(batch, 11, 4)
-        # abs_qua_error = matrix_to_quaternion(abs_pose_error[:, :, :3, :3])
+        # Convert SO3 error(batch, 11, 3, 3) to quaternion error(batch, 11, 4)
+        abs_qua_error = matrix_to_quaternion(abs_pose_error[:, :, :3, :3])
+
+        # Compute axis-angle error from SO(3)
+        # traces = torch.diagonal(abs_pose_error[:, :, :3, :3], dim1=-2, dim2=-1).sum(dim=-1)
+        # abs_angle_error = torch.arccos(torch.clamp((traces - 1) / 2.0, -1+eps, 1-eps))
 
         # Compute quaternion error from quaternion
-        abs_qua_est = matrix_to_quaternion(abs_pose_est[:, :, :3, :3])
-        abs_qua_gt = matrix_to_quaternion(abs_pose_gt[:, :, :3, :3])
-        abs_qua_error = quaternion_multiply(quaternion_invert(abs_qua_est), abs_qua_gt)
+        # abs_qua_est = matrix_to_quaternion(abs_pose_est[:, :, :3, :3])
+        # abs_qua_gt = matrix_to_quaternion(abs_pose_gt[:, :, :3, :3])
+        # abs_qua_error = quaternion_multiply(quaternion_invert(abs_qua_est), abs_qua_gt)
 
         # Move data to gpu
         rel_pose_est = rel_pose_est.cuda(non_blocking=True).float()
@@ -175,10 +179,10 @@ def train_epoch(model, optimizer, train_loader, image_cache, selection, temp, lo
             rel_pose_loss = rel_trans_loss + args.alpha * rel_rot_loss
 
             # Compute absolute pose Loss
-            theta_error = torch.clamp(abs_qua_error[:, :, 0], min=-1, max=1)    # (batch, 11)
+            theta_error = torch.clamp(abs_qua_error[:, :, 0], -1+eps, 1-eps)    # (batch, 11)
             angle_error = 2 * torch.arccos(theta_error)                         # (batch, 11)
             abs_rot_loss = torch.mean(angle_error)
-            abs_trans_loss = torch.sqrt(torch.nn.functional.mse_loss(abs_pose_est[:, :, :3, 3], abs_pose_gt[:, :, :3, 3]))
+            abs_trans_loss = torch.nn.functional.mse_loss(abs_pose_est[:, :, :3, 3], abs_pose_gt[:, :, :3, 3])
             abs_pose_loss = abs_trans_loss + args.alpha * abs_rot_loss
 
         else:
@@ -349,10 +353,10 @@ def main():
         torch.save(model.module.state_dict(), f'{checkpoints_dir}/{epoch:003}.pth')
 
         # Print the loss per epoch
-        message = f'\nEpoch {epoch} training finished, \t' \
+        message = f'Epoch {epoch} training finished, \t' \
                   f'avg pose loss: {avg_pose_loss:.6f}, \t' \
                   f'avg penalty loss: {avg_penalty_loss:.6f}, \t' \
-                  f'avg total loss: {avg_total_loss:.6f}'
+                  f'avg total loss: {avg_total_loss:.6f}\n'
 
         print(message)
         logger.info(message)
@@ -377,10 +381,10 @@ def main():
                 best = t_rel
                 torch.save(model.module.state_dict(), f'{checkpoints_dir}/best_{best:.2f}.pth')
 
-            message = f'Epoch {epoch} evaluation finished, ' \
-                      f't_rel: {t_rel:.4f}, r_rel: {r_rel:.4f}, ' \
-                      f't_rmse: {t_rmse:.4f}, r_rmse: {r_rmse:.4f}, ' \
-                      f'usage: {usage:.4f}, best t_rel: {best:.4f}'
+            message = f'Epoch {epoch} evaluation finished, \t' \
+                      f't_rel: {t_rel:.4f}, r_rel: {r_rel:.4f}, \t' \
+                      f't_rmse: {t_rmse:.4f}, r_rmse: {r_rmse:.4f}, \t' \
+                      f'usage: {usage:.4f}, best t_rel: {best:.4f}\n'
 
             logger.info(message)
             print(message)
