@@ -35,7 +35,7 @@ parser.add_argument('--rnn_dropout_out', type=float, default=0.2, help='dropout 
 parser.add_argument('--rnn_dropout_between', type=float, default=0.2, help='dropout within LSTM')
 
 parser.add_argument('--weight_decay', type=float, default=1e-5, help='weight decay for the optimizer')
-parser.add_argument('--batch_size', type=int, default=8, help='batch size')
+parser.add_argument('--batch_size', type=int, default=32, help='batch size')
 parser.add_argument('--seq_len', type=int, default=11, help='sequence length for LSTM')
 parser.add_argument('--workers', type=int, default=6, help='number of workers')
 parser.add_argument('--optimizer', type=str, default='Adam', help='type of optimizer [Adam, SGD]')
@@ -43,6 +43,7 @@ parser.add_argument('--optimizer', type=str, default='Adam', help='type of optim
 parser.add_argument('--epochs_warmup', type=int, default=40, help='number of epochs for warmup')
 parser.add_argument('--epochs_joint', type=int, default=40, help='number of epochs for joint training')
 parser.add_argument('--epochs_fine', type=int, default=20, help='number of epochs for finetuning')
+
 parser.add_argument('--lr_warmup', type=float, default=3e-4, help='learning rate for warming up stage')
 parser.add_argument('--lr_joint', type=float, default=3e-5, help='learning rate for joint training stage')
 parser.add_argument('--lr_fine', type=float, default=2e-5, help='learning rate for finetuning stage')
@@ -53,8 +54,8 @@ parser.add_argument('--alpha', type=float, default=100, help='weight to balance 
 parser.add_argument('--beta', type=float, default=0.1, help='weight to balance relative & absolute pose loss.')
 parser.add_argument('--Lambda', type=float, default=3e-5, help='penalty factor for the visual encoder usage')
 
-parser.add_argument('--experiment_name', type=str, default='test_loss', help='experiment name')
-parser.add_argument('--load_cache', default=False, help='whether to load the dataset pickle cache')
+parser.add_argument('--experiment_name', type=str, default='fastflow_jointloss', help='experiment name')
+parser.add_argument('--load_cache', default=True, help='whether to load the dataset pickle cache')
 parser.add_argument('--pkl_path', type=str, default='./dataset/kitti.pkl', help='path to load the dataset pickle cache')
 
 parser.add_argument('--ckpt_model', type=str, default=None, help='path to load the checkpoint')
@@ -152,16 +153,16 @@ def train_epoch(model, optimizer, train_loader, image_cache, selection, temp, lo
         abs_pose_gt = [path_accu(rel_pose_gt[i, :, :]) for i in range(rel_pose_gt.shape[0])]
         abs_pose_gt = torch.stack(abs_pose_gt, dim=0).cuda(non_blocking=True).float()
 
-        # Compute absolute pose error between estimation and ground-truth, SE3(batch, 11, 4, 4)
-        abs_pose_error = torch.linalg.pinv(abs_pose_est) @ abs_pose_gt
+        # # Compute absolute pose error between estimation and ground-truth, SE3(batch, 11, 4, 4)
+        # abs_pose_error = torch.inverse(abs_pose_est) @ abs_pose_gt
 
-        # Convert SE3 error(batch, 11, 4, 4) to quaternion error(batch, 11, 4)
-        abs_qua_error = matrix_to_quaternion(abs_pose_error[:, :, :3, :3])
+        # # Convert SE3 error(batch, 11, 4, 4) to quaternion error(batch, 11, 4)
+        # abs_qua_error = matrix_to_quaternion(abs_pose_error[:, :, :3, :3])
 
         # Compute quaternion error from quaternion
-        # abs_qua_est = matrix_to_quaternion(abs_pose_est[:, :, :3, :3])
-        # abs_qua_gt = matrix_to_quaternion(abs_pose_gt[:, :, :3, :3])
-        # abs_qua_error = quaternion_multiply(quaternion_invert(abs_qua_est), abs_qua_gt)
+        abs_qua_est = matrix_to_quaternion(abs_pose_est[:, :, :3, :3])
+        abs_qua_gt = matrix_to_quaternion(abs_pose_gt[:, :, :3, :3])
+        abs_qua_error = quaternion_multiply(quaternion_invert(abs_qua_est), abs_qua_gt)
 
         # Move data to gpu
         rel_pose_est = rel_pose_est.cuda(non_blocking=True).float()
@@ -187,8 +188,11 @@ def train_epoch(model, optimizer, train_loader, image_cache, selection, temp, lo
             rel_trans_loss = (weights.unsqueeze(-1).unsqueeze(-1) *
                               (rel_pose_est[:, :, 3:] - rel_pose_gt[:, :, 3:]) ** 2).mean()
 
+        # Compute overall pose loss
         pose_loss = rel_pose_loss + args.beta * abs_pose_loss
+        # Compute vision penalty loss
         penalty_loss = (decisions[:, :, 0].float()).sum(-1).mean()  # 平均每个bach每段时序上使用了视觉特征的次数
+        # Compute total loss
         total_loss = pose_loss + args.Lambda * penalty_loss
 
         # Compute gradient for params in model
@@ -345,10 +349,10 @@ def main():
         torch.save(model.module.state_dict(), f'{checkpoints_dir}/{epoch:003}.pth')
 
         # Print the loss per epoch
-        message = f'Epoch {epoch} training finished, ' \
-                  f'average pose_loss: {avg_pose_loss:.6f}, ' \
-                  f'average penalty_loss: {avg_penalty_loss:.6f}, ' \
-                  f'average total_loss: {avg_total_loss:.6f}, model saved'
+        message = f'\nEpoch {epoch} training finished, \t' \
+                  f'avg pose loss: {avg_pose_loss:.6f}, \t' \
+                  f'avg penalty loss: {avg_penalty_loss:.6f}, \t' \
+                  f'avg total loss: {avg_total_loss:.6f}'
 
         print(message)
         logger.info(message)
