@@ -29,19 +29,38 @@ def euler_from_matrix(matrix):
     '''
     Extract the eular angle from a rotation matrix
     '''
-    M = np.array(matrix, dtype=np.float64, copy=False)[:3, :3]
-    cy = math.sqrt(M[0, 0] * M[0, 0] + M[1, 0] * M[1, 0])
-    ay = math.atan2(-M[2, 0], cy)
-    if ay < -math.pi / 2 + _EPS and ay > -math.pi / 2 - _EPS:  # pitch = -90 deg
-        ax = 0
-        az = math.atan2(-M[1, 2], -M[0, 2])
-    elif ay < math.pi / 2 + _EPS and ay > math.pi / 2 - _EPS:
-        ax = 0
-        az = math.atan2(M[1, 2], M[0, 2])
+    if torch.is_tensor(matrix):
+        M = torch.tensor(matrix, dtype=torch.float64)[:3, :3]
+        cy = torch.sqrt(M[0, 0] * M[0, 0] + M[1, 0] * M[1, 0])
+        ay = torch.atan2(-M[2, 0], cy)
+
+        if ay < -math.pi / 2 + _EPS and ay > -math.pi / 2 - _EPS:
+            ax = torch.tensor(0.0)
+            az = torch.atan2(-M[1, 2], -M[0, 2])
+        elif ay < math.pi / 2 + _EPS and ay > math.pi / 2 - _EPS:
+            ax = torch.tensor(0.0)
+            az = torch.atan2(M[1, 2], M[0, 2])
+        else:
+            ax = torch.atan2(M[2, 1], M[2, 2])
+            az = torch.atan2(M[1, 0], M[0, 0])
+
+        return torch.tensor([ax.item(), ay.item(), az.item()])
+    
     else:
-        ax = math.atan2(M[2, 1], M[2, 2])
-        az = math.atan2(M[1, 0], M[0, 0])
-    return np.array([ax, ay, az])
+        M = np.array(matrix, dtype=np.float64, copy=False)[:3, :3]
+        cy = math.sqrt(M[0, 0] * M[0, 0] + M[1, 0] * M[1, 0])
+        ay = math.atan2(-M[2, 0], cy)
+        
+        if ay < -math.pi / 2 + _EPS and ay > -math.pi / 2 - _EPS:  # pitch = -90 deg
+            ax = 0
+            az = math.atan2(-M[1, 2], -M[0, 2])
+        elif ay < math.pi / 2 + _EPS and ay > math.pi / 2 - _EPS:
+            ax = 0
+            az = math.atan2(M[1, 2], M[0, 2])
+        else:
+            ax = math.atan2(M[2, 1], M[2, 2])
+            az = math.atan2(M[1, 0], M[0, 0])
+        return np.array([ax, ay, az])
 
 
 def get_relative_pose(Rt1, Rt2):

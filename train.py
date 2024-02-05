@@ -4,8 +4,8 @@ import logging
 from path import Path
 from functools import lru_cache
 from utils import custom_transform
-from utils.utils import path_accu
-from pytorch3d.transforms import matrix_to_quaternion, quaternion_invert, quaternion_multiply
+from utils.utils import path_accu, euler_from_matrix
+from pytorch3d.transforms import matrix_to_quaternion, matrix_to_euler_angles, quaternion_invert, quaternion_multiply
 from dataset.KITTI_dataset import KITTI
 from model import DeepVIO
 from utils.kitti_eval import KITTI_tester
@@ -39,15 +39,15 @@ parser.add_argument('--seq_len', type=int, default=11, help='sequence length for
 parser.add_argument('--optimizer', type=str, default='Adam', help='type of optimizer [Adam, SGD]')
 parser.add_argument('--weight_decay', type=float, default=1e-4, help='weight decay for the optimizer')
 
-parser.add_argument('--epochs_warmup', type=int, default=40, help='number of epochs for warmup')
-parser.add_argument('--epochs_joint', type=int, default=40, help='number of epochs for joint training')
+parser.add_argument('--epochs_warmup', type=int, default=30, help='number of epochs for warmup')
+parser.add_argument('--epochs_joint', type=int, default=50, help='number of epochs for joint training')
 parser.add_argument('--epochs_fine', type=int, default=20, help='number of epochs for finetuning')
 
 parser.add_argument('--lr_warmup', type=float, default=3e-4, help='learning rate for warming up stage')
 parser.add_argument('--lr_joint', type=float, default=3e-5, help='learning rate for joint training stage')
 parser.add_argument('--lr_fine', type=float, default=2e-5, help='learning rate for finetuning stage')
 
-parser.add_argument('--alpha', type=float, default=100, help='weight to balance relative translational & rotational loss.')
+parser.add_argument('--alpha', type=float, default=200, help='weight to balance relative translational & rotational loss.')
 parser.add_argument('--beta', type=float, default=1, help='weight to balance relative & absolute pose loss.')
 parser.add_argument('--Lambda', type=float, default=3e-5, help='penalty factor for the visual encoder usage')
 parser.add_argument('--eta', type=float, default=0.05, help='exponential decay factor for temperature')
@@ -76,6 +76,7 @@ args = parser.parse_args()
 torch.manual_seed(args.seed)
 np.random.seed(args.seed)
 eps = 1e-6
+
 
 class ImageCache:
     def __init__(self, image_cache):
@@ -108,7 +109,7 @@ def update_status(epoch, args, model):
     # Finetuning stage
     elif epoch >= args.epochs_warmup + args.epochs_joint:
         lr = args.lr_fine
-        beta = 0.0001 * args.beta
+        beta = 0.001 * args.beta
         selection = 'gumbel-softmax'
         temp = args.temp_init * math.exp(-args.eta * (epoch - args.epochs_warmup))
 
@@ -156,11 +157,16 @@ def train_epoch(model, optimizer, train_loader, image_cache, selection, temp, lo
         abs_pose_gt = [path_accu(rel_pose_gt[i, :, :]) for i in range(rel_pose_gt.shape[0])]
         abs_pose_gt = torch.stack(abs_pose_gt, dim=0).cuda(non_blocking=True).float()
 
+        # Convert SO3 matrix (batch, 11, 3, 3) to euler angles(batch, 11, 3)
+        abs_angle_est = matrix_to_euler_angles(abs_pose_est[:, :, :3, :3], "XYZ")
+        abs_angle_gt = matrix_to_euler_angles(abs_pose_gt[:, :, :3, :3], "XYZ")
+
+
         # Compute absolute pose error between estimation and ground-truth, SE3(batch, 11, 4, 4)
-        abs_pose_error = torch.inverse(abs_pose_est) @ abs_pose_gt
+        # abs_pose_error = torch.inverse(abs_pose_est) @ abs_pose_gt
 
         # Convert SO3 error(batch, 11, 3, 3) to quaternion error(batch, 11, 4)
-        abs_qua_error = matrix_to_quaternion(abs_pose_error[:, :, :3, :3])
+        # abs_qua_error = matrix_to_quaternion(abs_pose_error[:, :, :3, :3])
 
         # Compute axis-angle error from SO(3)
         # traces = torch.diagonal(abs_pose_error[:, :, :3, :3], dim1=-2, dim2=-1).sum(dim=-1)
@@ -182,9 +188,10 @@ def train_epoch(model, optimizer, train_loader, image_cache, selection, temp, lo
             rel_pose_loss = rel_trans_loss + args.alpha * rel_rot_loss
 
             # Compute absolute pose Loss
-            theta_error = torch.clamp(abs_qua_error[:, :, 0], -1+eps, 1-eps)    # (batch, 11)
-            angle_error = 2 * torch.arccos(theta_error)                         # (batch, 11)
-            abs_rot_loss = torch.mean(angle_error)
+            # theta_error = torch.clamp(abs_qua_error[:, :, 0], -1 + eps, 1 - eps)    # (batch, 11)
+            # angle_error = 2 * torch.arccos(theta_error)                         # (batch, 11)
+            # abs_rot_loss = torch.mean(angle_error)
+            abs_rot_loss = torch.nn.functional.mse_loss(abs_angle_est[:, :, :3], abs_angle_gt[:, :, :3])
             abs_trans_loss = torch.nn.functional.mse_loss(abs_pose_est[:, :, :3, 3], abs_pose_gt[:, :, :3, 3])
             abs_pose_loss = abs_trans_loss + args.alpha * abs_rot_loss
 
@@ -211,11 +218,11 @@ def train_epoch(model, optimizer, train_loader, image_cache, selection, temp, lo
         # Print the batch loss
         if i % args.print_frequency == 0:
             message = f'Epoch: {ep}, batch: {i}/{data_len}, \t' \
-                    f'rel_pose_loss: {rel_pose_loss.item():.6f}, \t' \
-                    f'abs_pose_loss: {abs_pose_loss.item():.6f}, \t' \
-                    f'pose_loss: {pose_loss.item():.6f}, \t' \
-                    f'penalty_loss: {penalty_loss.item():.6f}, \t ' \
-                    f'total loss: {total_loss.item():.6f}'
+                f'rel_pose_loss: {rel_pose_loss.item():.6f}, \t' \
+                f'abs_pose_loss: {abs_pose_loss.item():.6f}, \t' \
+                f'pose_loss: {pose_loss.item():.6f}, \t' \
+                f'penalty_loss: {penalty_loss.item():.6f}, \t ' \
+                f'total loss: {total_loss.item():.6f}'
             print(message)
             logger.info(message)
 
@@ -366,7 +373,7 @@ def main():
 
         # ======================================================================================
         # Evaluate the model
-        if epoch > args.epochs_warmup + args.epochs_joint:
+        if epoch == args.epochs_warmup - 1 or epoch == args.epochs_joint - 1 or epoch > args.epochs_warmup + args.epochs_joint:
             print('Evaluating the model')
             logger.info('Evaluating the model')
             with torch.no_grad():
