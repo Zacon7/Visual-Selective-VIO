@@ -48,21 +48,21 @@ parser.add_argument('--lr_joint', type=float, default=3e-5, help='learning rate 
 parser.add_argument('--lr_fine', type=float, default=2e-5, help='learning rate for finetuning stage')
 
 parser.add_argument('--alpha', type=float, default=100, help='weight to balance relative translational & rotational loss.')
-parser.add_argument('--beta', type=float, default=0.05, help='weight to balance relative & absolute pose loss.')
+parser.add_argument('--beta', type=float, default=1, help='weight to balance relative & absolute pose loss.')
 parser.add_argument('--Lambda', type=float, default=3e-5, help='penalty factor for the visual encoder usage')
 parser.add_argument('--eta', type=float, default=0.05, help='exponential decay factor for temperature')
 parser.add_argument('--temp_init', type=float, default=5, help='initial temperature for gumbel-softmax')
 
 parser.add_argument('--experiment_name', type=str, default='fastflow_jointloss', help='experiment name')
-parser.add_argument('--load_cache', default=True, help='whether to load the dataset pickle cache')
-parser.add_argument('--pkl_path', type=str, default='./dataset/kitti.pkl', help='path to load the dataset pickle cache')
-parser.add_argument('--workers', type=int, default=6, help='number of workers')
-
 parser.add_argument('--ckpt_model', type=str, default=None, help='path to load the checkpoint')
 parser.add_argument('--flow_encoder', type=str, default='fastflownet', help='choose to use the flownet or fastflownet')
 parser.add_argument('--flownetBN', default=True, help='choose to use the flownetS or flownetS_BN')
 parser.add_argument('--pretrain_flownet', type=str, default='pretrain_models/fastflownet_ft_kitti.pth',
                     help='path to load pretrained flownet model')
+
+parser.add_argument('--load_cache', default=True, help='whether to load the dataset pickle cache')
+parser.add_argument('--pkl_path', type=str, default='./dataset/kitti.pkl', help='path to load the dataset pickle cache')
+parser.add_argument('--workers', type=int, default=6, help='number of workers')
 
 parser.add_argument('--hflip', default=False, action='store_true',
                     help='whether to use horizonal flipping augmentation')
@@ -90,6 +90,7 @@ def update_status(epoch, args, model):
     # Warmup stage
     if epoch < args.epochs_warmup:
         lr = args.lr_warmup
+        beta = 0.01 * args.beta
         selection = 'random'
         temp = args.temp_init
         for param in model.module.Policy_net.parameters():  # Disable the policy network
@@ -98,6 +99,7 @@ def update_status(epoch, args, model):
     # Joint training stage
     elif epoch >= args.epochs_warmup and epoch < (args.epochs_warmup + args.epochs_joint):
         lr = args.lr_joint
+        beta = 0.001 * args.beta
         selection = 'gumbel-softmax'
         temp = args.temp_init * math.exp(-args.eta * (epoch - args.epochs_warmup))
         for param in model.module.Policy_net.parameters():  # Enable the policy network
@@ -106,13 +108,14 @@ def update_status(epoch, args, model):
     # Finetuning stage
     elif epoch >= args.epochs_warmup + args.epochs_joint:
         lr = args.lr_fine
+        beta = 0.0001 * args.beta
         selection = 'gumbel-softmax'
         temp = args.temp_init * math.exp(-args.eta * (epoch - args.epochs_warmup))
 
-    return lr, selection, temp
+    return lr, beta, selection, temp
 
 
-def train_epoch(model, optimizer, train_loader, image_cache, selection, temp, logger, ep, p=0.5, weighted=False):
+def train_epoch(model, optimizer, train_loader, image_cache, selection, temp, logger, ep, beta, p=0.5, weighted=False):
 
     mse_losses = []
     penalties = []
@@ -193,7 +196,7 @@ def train_epoch(model, optimizer, train_loader, image_cache, selection, temp, lo
                               (rel_pose_est[:, :, 3:] - rel_pose_gt[:, :, 3:]) ** 2).mean()
 
         # Compute overall pose loss
-        pose_loss = rel_pose_loss + args.beta * abs_pose_loss
+        pose_loss = rel_pose_loss + beta * abs_pose_loss
         # Compute vision penalty loss
         penalty_loss = (decisions[:, :, 0].float()).sum(-1).mean()  # 平均每个bach每段时序上使用了视觉特征的次数
         # Compute total loss
@@ -207,11 +210,11 @@ def train_epoch(model, optimizer, train_loader, image_cache, selection, temp, lo
 
         # Print the batch loss
         if i % args.print_frequency == 0:
-            message = f'Epoch: {ep}, batch: {i}/{data_len},\t' \
-                    f'rel_pose_loss: {rel_pose_loss.item():.6f},\t' \
-                    f'abs_pose_loss: {abs_pose_loss.item():.6f},\t' \
-                    f'pose_loss: {pose_loss.item():.6f},\t' \
-                    f'penalty_loss: {penalty_loss.item():.6f},\t ' \
+            message = f'Epoch: {ep}, batch: {i}/{data_len}, \t' \
+                    f'rel_pose_loss: {rel_pose_loss.item():.6f}, \t' \
+                    f'abs_pose_loss: {abs_pose_loss.item():.6f}, \t' \
+                    f'pose_loss: {pose_loss.item():.6f}, \t' \
+                    f'penalty_loss: {penalty_loss.item():.6f}, \t ' \
                     f'total loss: {total_loss.item():.6f}'
             print(message)
             logger.info(message)
@@ -337,7 +340,7 @@ def main():
     # Start training
     for epoch in range(init_epoch, args.epochs_warmup + args.epochs_joint + args.epochs_fine):
 
-        lr, selection, temp = update_status(epoch, args, model)
+        lr, beta, selection, temp = update_status(epoch, args, model)
         optimizer.param_groups[0]['lr'] = lr
         message = f'Epoch: {epoch}, lr: {lr}, selection: {selection}, temperaure: {temp:.5f}'
         print(message)
@@ -346,7 +349,7 @@ def main():
         # Train one epoch
         model.train()
         avg_pose_loss, avg_penalty_loss = train_epoch(
-            model, optimizer, train_loader, image_cache, selection, temp, logger, epoch, p=0.5)
+            model, optimizer, train_loader, image_cache, selection, temp, logger, epoch, beta, p=0.5)
         avg_total_loss = avg_pose_loss + args.Lambda * avg_penalty_loss
 
         # Save the model per epoch
