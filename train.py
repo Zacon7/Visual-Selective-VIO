@@ -18,8 +18,7 @@ parser.add_argument('--data_dir', type=str, default='./data', help='path to the 
 parser.add_argument('--gpu_ids', type=str, default='0', help='gpu ids: e.g. 0  0,1,2, 0,2. use -1 for CPU')
 parser.add_argument('--save_dir', type=str, default='./results', help='path to save the result')
 
-parser.add_argument('--train_seq', type=list, default=['00', '01', '02', '04', '06', '08', '09'],
-                    help='sequences for training')
+parser.add_argument('--train_seq', type=list, default=['00', '01', '02', '04', '06', '08', '09'], help='sequences for training')
 parser.add_argument('--val_seq', type=list, default=['05', '07', '10'], help='sequences for validation')
 parser.add_argument('--seed', type=int, default=3407, help='random seed')
 
@@ -37,35 +36,35 @@ parser.add_argument('--rnn_dropout_between', type=float, default=0.2, help='drop
 parser.add_argument('--batch_size', type=int, default=32, help='batch size')
 parser.add_argument('--seq_len', type=int, default=11, help='sequence length for LSTM')
 parser.add_argument('--optimizer', type=str, default='Adam', help='type of optimizer [Adam, SGD]')
-parser.add_argument('--weight_decay', type=float, default=1e-4, help='weight decay for the optimizer')
+parser.add_argument('--weight_decay', type=float, default=1e-5, help='weight decay for the optimizer')
 
-parser.add_argument('--epochs_warmup', type=int, default=30, help='number of epochs for warmup')
-parser.add_argument('--epochs_joint', type=int, default=50, help='number of epochs for joint training')
-parser.add_argument('--epochs_fine', type=int, default=20, help='number of epochs for finetuning')
+parser.add_argument('--epochs_warmup', type=int, default=40, help='number of epochs for warmup')
+parser.add_argument('--epochs_joint', type=int, default=40, help='number of epochs for joint training')
+parser.add_argument('--epochs_fine1', type=int, default=10, help='number of epochs for finetuning')
+parser.add_argument('--epochs_fine2', type=int, default=10, help='number of epochs for finetuning')
 
 parser.add_argument('--lr_warmup', type=float, default=3e-4, help='learning rate for warming up stage')
-parser.add_argument('--lr_joint', type=float, default=3e-5, help='learning rate for joint training stage')
-parser.add_argument('--lr_fine', type=float, default=2e-5, help='learning rate for finetuning stage')
+parser.add_argument('--lr_joint', type=float, default=5e-5, help='learning rate for joint training stage')
+parser.add_argument('--lr_fine1', type=float, default=3e-5, help='learning rate for finetuning stage-1')
+parser.add_argument('--lr_fine2', type=float, default=1e-5, help='learning rate for finetuning stage-2')
 
-parser.add_argument('--alpha', type=float, default=200, help='weight to balance relative translational & rotational loss.')
+parser.add_argument('--alpha', type=float, default=100, help='weight to balance relative translational & rotational loss.')
 parser.add_argument('--beta', type=float, default=1, help='weight to balance relative & absolute pose loss.')
 parser.add_argument('--Lambda', type=float, default=3e-5, help='penalty factor for the visual encoder usage')
 parser.add_argument('--eta', type=float, default=0.05, help='exponential decay factor for temperature')
 parser.add_argument('--temp_init', type=float, default=5, help='initial temperature for gumbel-softmax')
 
-parser.add_argument('--experiment_name', type=str, default='fastflow_jointloss', help='experiment name')
-parser.add_argument('--ckpt_model', type=str, default=None, help='path to load the checkpoint')
+parser.add_argument('--experiment_name', type=str, default='fastflow_jointloss_4', help='experiment name')
+parser.add_argument('--ckpt_model',type=str,default='results/train/fastflow_jointloss_4/checkpoints/019.pth',help='path to load the checkpoint')
 parser.add_argument('--flow_encoder', type=str, default='fastflownet', help='choose to use the flownet or fastflownet')
 parser.add_argument('--flownetBN', default=True, help='choose to use the flownetS or flownetS_BN')
-parser.add_argument('--pretrain_flownet', type=str, default='pretrain_models/fastflownet_ft_kitti.pth',
-                    help='path to load pretrained flownet model')
+parser.add_argument('--pretrain_flownet', type=str, default='pretrain_models/fastflownet_ft_kitti.pth', help='path to load pretrained flownet model')
 
-parser.add_argument('--load_cache', default=True, help='whether to load the dataset pickle cache')
+parser.add_argument('--load_cache', default=False, help='whether to load the dataset pickle cache')
 parser.add_argument('--pkl_path', type=str, default='./dataset/kitti.pkl', help='path to load the dataset pickle cache')
-parser.add_argument('--workers', type=int, default=6, help='number of workers')
+parser.add_argument('--workers', type=int, default=10, help='number of workers')
 
-parser.add_argument('--hflip', default=False, action='store_true',
-                    help='whether to use horizonal flipping augmentation')
+parser.add_argument('--hflip', default=False, action='store_true', help='whether to use horizonal flipping augmentation')
 parser.add_argument('--color', default=False, action='store_true', help='whether to use color augmentations')
 parser.add_argument('--print_frequency', type=int, default=10, help='print frequency for loss values')
 parser.add_argument('--weighted', default=False, action='store_true', help='whether to use weighted sum')
@@ -98,18 +97,25 @@ def update_status(epoch, args, model):
             param.requires_grad = False
 
     # Joint training stage
-    elif epoch >= args.epochs_warmup and epoch < (args.epochs_warmup + args.epochs_joint):
+    elif epoch < (args.epochs_warmup + args.epochs_joint):
         lr = args.lr_joint
-        beta = 0.001 * args.beta
+        beta = 0.1 * args.beta
         selection = 'gumbel-softmax'
         temp = args.temp_init * math.exp(-args.eta * (epoch - args.epochs_warmup))
         for param in model.module.Policy_net.parameters():  # Enable the policy network
             param.requires_grad = True
 
-    # Finetuning stage
-    elif epoch >= args.epochs_warmup + args.epochs_joint:
-        lr = args.lr_fine
-        beta = 0.001 * args.beta
+    # Finetuning stage-1
+    elif epoch < (args.epochs_warmup + args.epochs_joint + args.epochs_fine1):
+        lr = args.lr_fine1
+        beta = 0.05 * args.beta
+        selection = 'gumbel-softmax'
+        temp = args.temp_init * math.exp(-args.eta * (epoch - args.epochs_warmup))
+
+    # Finetuning stage-2
+    elif epoch >= (args.epochs_warmup + args.epochs_joint + args.epochs_fine1):
+        lr = args.lr_fine2
+        beta = 0.05 * args.beta
         selection = 'gumbel-softmax'
         temp = args.temp_init * math.exp(-args.eta * (epoch - args.epochs_warmup))
 
@@ -160,7 +166,6 @@ def train_epoch(model, optimizer, train_loader, image_cache, selection, temp, lo
         # Convert SO3 matrix (batch, 11, 3, 3) to euler angles(batch, 11, 3)
         abs_angle_est = matrix_to_euler_angles(abs_pose_est[:, :, :3, :3], "XYZ")
         abs_angle_gt = matrix_to_euler_angles(abs_pose_gt[:, :, :3, :3], "XYZ")
-
 
         # Compute absolute pose error between estimation and ground-truth, SE3(batch, 11, 4, 4)
         # abs_pose_error = torch.inverse(abs_pose_est) @ abs_pose_gt
@@ -217,11 +222,11 @@ def train_epoch(model, optimizer, train_loader, image_cache, selection, temp, lo
 
         # Print the batch loss
         if i % args.print_frequency == 0:
-            message = f'Epoch: {ep}, batch: {i}/{data_len}, \t' \
-                f'rel_pose_loss: {rel_pose_loss.item():.6f}, \t' \
-                f'abs_pose_loss: {abs_pose_loss.item():.6f}, \t' \
-                f'pose_loss: {pose_loss.item():.6f}, \t' \
-                f'penalty_loss: {penalty_loss.item():.6f}, \t ' \
+            message = f'Epoch: {ep}, batch: {i}/{data_len},\t\t' \
+                f'rel_pose_loss: {rel_pose_loss.item():.6f},\t' \
+                f'abs_pose_loss: {abs_pose_loss.item():.6f},\t' \
+                f'pose_loss: {pose_loss.item():.6f},\t' \
+                f'penalty_loss: {penalty_loss.item():.6f},\t\t' \
                 f'total loss: {total_loss.item():.6f}'
             print(message)
             logger.info(message)
@@ -252,7 +257,7 @@ def main():
     file_handler.setLevel(logging.INFO)
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
-    logger.info('----------------------------------------TRAINING----------------------------------')
+    logger.info('----------------------------------TRAINING----------------------------------')
     logger.info('PARAMETER ...')
     logger.info(args)
 
@@ -345,7 +350,7 @@ def main():
     best = 10000
 
     # Start training
-    for epoch in range(init_epoch, args.epochs_warmup + args.epochs_joint + args.epochs_fine):
+    for epoch in range(init_epoch, args.epochs_warmup + args.epochs_joint + args.epochs_fine1 + args.epochs_fine2):
 
         lr, beta, selection, temp = update_status(epoch, args, model)
         optimizer.param_groups[0]['lr'] = lr
@@ -363,9 +368,9 @@ def main():
         torch.save(model.module.state_dict(), f'{checkpoints_dir}/{epoch:003}.pth')
 
         # Print the loss per epoch
-        message = f'Epoch {epoch} training finished, \t' \
-                  f'avg pose loss: {avg_pose_loss:.6f}, \t' \
-                  f'avg penalty loss: {avg_penalty_loss:.6f}, \t' \
+        message = f'Epoch {epoch} training finished,\t' \
+                  f'avg pose loss: {avg_pose_loss:.6f},\t' \
+                  f'avg penalty loss: {avg_penalty_loss:.6f},\t\t' \
                   f'avg total loss: {avg_total_loss:.6f}\n'
 
         print(message)
@@ -373,7 +378,7 @@ def main():
 
         # ======================================================================================
         # Evaluate the model
-        if epoch == args.epochs_warmup - 1 or epoch == args.epochs_joint - 1 or epoch > args.epochs_warmup + args.epochs_joint:
+        if epoch == args.epochs_warmup - 1 or epoch == args.epochs_warmup + args.epochs_joint / 2 or epoch > args.epochs_warmup + args.epochs_joint:
             print('Evaluating the model')
             logger.info('Evaluating the model')
             with torch.no_grad():
@@ -391,16 +396,17 @@ def main():
                 best = t_rel
                 torch.save(model.module.state_dict(), f'{checkpoints_dir}/best_{best:.2f}.pth')
 
-            message = f'Epoch {epoch} evaluation finished, \t' \
-                      f't_rel: {t_rel:.4f}, r_rel: {r_rel:.4f}, \t' \
-                      f't_rmse: {t_rmse:.4f}, r_rmse: {r_rmse:.4f}, \t' \
+            message = f'Epoch {epoch} evaluation finished,  ' \
+                      f't_rel: {t_rel:.4f}, r_rel: {r_rel:.4f},  ' \
+                      f't_rmse: {t_rmse:.4f}, r_rmse: {r_rmse:.4f},  ' \
                       f'usage: {usage:.4f}, best t_rel: {best:.4f}\n'
 
             logger.info(message)
             print(message)
         # ======================================================================================
 
-    message = f'Training finished, best t_rel: {best:.4f}'
+    message = f'Training finished, best t_rel: {best:.4f}\n' \
+              f'----------------------------------FINISH----------------------------------'
     logger.info(message)
     print(message)
 

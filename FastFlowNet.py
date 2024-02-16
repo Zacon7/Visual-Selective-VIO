@@ -31,6 +31,9 @@ def convrelu(in_channels, out_channels, kernel_size=3, stride=1,
             nn.LeakyReLU(0.1, inplace=True)
         )
 
+def deconv(in_planes, out_planes, kernel_size=4, stride=2, padding=1):
+    return nn.ConvTranspose2d(in_planes, out_planes, kernel_size, stride, padding, bias=True)
+
 
 class Decoder(nn.Module):
     def __init__(self, in_channels, groups):
@@ -41,9 +44,9 @@ class Decoder(nn.Module):
         self.conv2 = convrelu(96, 96, kernel_size=3, stride=1, groups=groups)
         self.conv3 = convrelu(96, 96, kernel_size=3, stride=1, groups=groups)
         self.conv4 = convrelu(96, 96, kernel_size=3, stride=1, groups=groups)
-        # self.conv5 = convrelu(96, 64, kernel_size=3, stride=1)
-        # self.conv6 = convrelu(64, 32, kernel_size=3, stride=1)
-        # self.conv7 = nn.Conv2d(32, 2, kernel_size=3, stride=1, 1)
+        self.conv5 = convrelu(96, 64, kernel_size=3, stride=1)
+        self.conv6 = convrelu(64, 32, kernel_size=3, stride=1)
+        self.conv7 = nn.Conv2d(32, 2, 3, 1, 1)
 
     def channel_shuffle(self, x, groups):
         b, c, h, w = x.size()
@@ -61,7 +64,7 @@ class Decoder(nn.Module):
             out = self.channel_shuffle(self.conv2(out), self.groups)
             out = self.channel_shuffle(self.conv3(out), self.groups)
             out = self.channel_shuffle(self.conv4(out), self.groups)    # (batch, 96, 4, 8)
-            # out = self.conv7(self.conv6(self.conv5(out)))
+            out = self.conv7(self.conv6(self.conv5(out)))
         return out
 
 
@@ -90,14 +93,31 @@ class FastFlowNet(nn.Module):
                                    64, 66, 68, 70,
                                    72, 74, 76, 78, 80])
 
+        self.rconv5 = convrelu(64, 32, 3, 1)
         self.rconv6 = convrelu(64, 32, kernel_size=3, stride=1)
+        self.decoder5 = Decoder(87, groups)
         self.decoder6 = Decoder(87, groups)
+        self.up6 = deconv(2, 2)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight)
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
+
+    def warp(self, x, flo):
+        B, C, H, W = x.size()
+        xx = torch.arange(0, W).view(1, -1).repeat(H, 1)
+        yy = torch.arange(0, H).view(-1, 1).repeat(1, W)
+        xx = xx.view(1, 1, H, W).repeat(B, 1, 1, 1)
+        yy = yy.view(1, 1, H, W).repeat(B, 1, 1, 1)
+        grid = torch.cat([xx, yy], 1).to(x)
+        vgrid = grid + flo
+        vgrid[:, 0, :, :] = 2.0 * vgrid[:, 0, :, :] / max(W-1, 1) - 1.0
+        vgrid[:, 1, :, :] = 2.0 * vgrid[:, 1, :, :] / max(H-1, 1) - 1.0
+        vgrid = vgrid.permute(0, 2, 3, 1)        
+        output = F.grid_sample(x, vgrid, mode='bilinear', align_corners=True)
+        return output
 
     def forward(self, x):
         img1 = x[:, :3, :, :]
@@ -121,4 +141,11 @@ class FastFlowNet(nn.Module):
         cat6 = torch.cat([cv6, r16, flow7_up], 1)    # (batch, 87, 4, 8)
         flow6 = self.decoder6(cat6)                  # (batch, 96, 4, 8)
 
-        return flow6
+        flow6_up = self.up6(flow6)
+        f25_w = self.warp(f25, flow6_up*0.625)
+        cv5 = torch.index_select(self.corr(f15, f25_w), dim=1, index=self.index.to(f15).long())
+        r15 = self.rconv5(f15)
+        cat5 = torch.cat([cv5, r15, flow6_up], 1)
+        flow5 = self.decoder5(cat5) + flow6_up
+
+        return flow5
