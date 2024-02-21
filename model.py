@@ -5,7 +5,7 @@ from torch.nn.init import kaiming_normal_, orthogonal_
 import numpy as np
 import torch.nn.functional as F
 from FastFlowNet import FastFlowNet
-
+from EFA import EarlyFusionAttention
 
 def conv(in_planes, out_planes, kernel_size=3, stride=1, dropout=0, batchNorm=True):
     if batchNorm:
@@ -56,8 +56,8 @@ class InertialEncoder(nn.Module):
             out:(batch, seq_len=10, i_f_len=256)
         '''
         batch_size, seq_len = fi.shape[0], fi.shape[1]
-        fi = fi.view(batch_size * seq_len, fi.size(2), fi.size(3))  # fi:  (batch *seq_len=10, 11, 6)
-        fi = self.encoder_conv(fi.permute(0, 2, 1))                 # fi:  (batch *seq_len=10, 256, 11)
+        fi = fi.view(batch_size * seq_len, fi.size(2), fi.size(3)).permute(0, 2, 1)  # fi:  (batch *seq_len=10, 6, 11)
+        fi = self.encoder_conv(fi)                                  # fi:  (batch *seq_len=10, 256, 11)
         out = self.proj(fi.view(fi.shape[0], -1))                   # out: (batch *seq_len=10, i_f_len=256)
         return out.view(batch_size, seq_len, 256)                   # out: (batch, seq_len=10, i_f_len=256)
 
@@ -106,12 +106,12 @@ class Encoder(nn.Module):
         # feed imgs into Flow Encoder
         fv = torch.cat((imgs[:, :-1], imgs[:, 1:]), dim=2)  # fv: (batch, seq_len=10, 6, H, W)
         batch_size, seq_len = fv.size(0), fv.size(1)
-        fv = fv.view(batch_size * seq_len, fv.size(2), fv.size(3), fv.size(4))
+        fv = fv.view(batch_size * seq_len, fv.size(2), fv.size(3), fv.size(4))  # fv: (batch* seq_len=10, 6, H, W)
 
         if self.opt.flow_encoder == 'flownet':
             fv = self.flownet(fv)                 # fv: (batch* seq_len=10, 1024, 4, 8)
         elif self.opt.flow_encoder == 'fastflownet':
-            fv = self.fastflownet(fv)             # fv: (batch* seq_len=10, 96, 4, 8)
+            fv = self.fastflownet(fv)             # fv: (batch* seq_len=10, 2, 8, 16)
 
         fv = fv.view(batch_size, seq_len, -1)     # fv: (batch, seq_len=10, -1)
         fv = self.visual_head(fv)                 # fv: (batch, seq_len=10, v_f_len=512)
@@ -147,14 +147,16 @@ class FusionModule(nn.Module):
             self.net = nn.Sequential(
                 nn.Linear(self.f_len, 2 * self.f_len)
             )
+        elif self.fuse_method == 'EFA':
+            self.net = EarlyFusionAttention(opt)
 
     def forward(self, fv, fi):
         if self.fuse_method == 'cat':
             return torch.cat((fv, fi), -1)      # feat_cat: (B, 1, 768)
         elif self.fuse_method == 'soft':
-            feat_cat = torch.cat((fv, fi), -1)  # feat_cat: (B, 1, 768)
-            weights = self.net(feat_cat)        # weights: (B, 1, 768 * 2)
-            return feat_cat * weights
+            feat_cat = torch.cat((fv, fi), -1)
+            weights = self.net(feat_cat)
+            return feat_cat * weights           # feat_fuse: (B, 1, 768)
         elif self.fuse_method == 'hard':
             feat_cat = torch.cat((fv, fi), -1)  # feat_cat: (B, 1, 768)
             weights = self.net(feat_cat)        # weights: (B, 1, 768 * 2)
@@ -162,6 +164,8 @@ class FusionModule(nn.Module):
             # mask: (B, 1, 768, 2) --> (Enable, Disable)
             mask = F.gumbel_softmax(weights, tau=1, hard=True, dim=-1)
             return feat_cat * mask[:, :, :, 0]
+        elif self.fuse_method == 'EFA':
+            return self.net(fv, fi)             # feat_fuse: (B, 1, 768)
 
 
 class PolicyNet(nn.Module):
@@ -301,7 +305,7 @@ class DeepVIO(nn.Module):
 
             else:
                 if selection == 'gumbel-softmax':
-                    # Otherwise, sample the decision dt from the policy network
+                    # Sample the decision dt from the policy network
                     p_in = torch.cat((fi[:, i, :], hidden), -1)    # p_in: (batch, i_f_len + rnn_hidden_size)
                     pt, dt = self.Policy_net(p_in.detach(), temp)  # pt, dt: (batch, 2)
                     pt, dt = pt.unsqueeze(1), dt.unsqueeze(1)      # pt, dt: (batch, 1, 2)

@@ -20,20 +20,20 @@ parser.add_argument('--save_dir', type=str, default='./results', help='path to s
 
 parser.add_argument('--train_seq', type=list, default=['00', '01', '02', '04', '06', '08', '09'], help='sequences for training')
 parser.add_argument('--val_seq', type=list, default=['05', '07', '10'], help='sequences for validation')
-parser.add_argument('--seed', type=int, default=3407, help='random seed')
+parser.add_argument('--seed', type=int, default=0, help='random seed')
 
 parser.add_argument('--img_h', type=int, default=256, help='image height')
 parser.add_argument('--img_w', type=int, default=512, help='image width')
 parser.add_argument('--v_f_len', type=int, default=512, help='visual feature length')
 parser.add_argument('--i_f_len', type=int, default=256, help='imu feature length')
 parser.add_argument('--imu_dropout', type=float, default=0, help='dropout for the IMU encoder')
-parser.add_argument('--fuse_method', type=str, default='hard', help='fusion method [cat, soft, hard]')
+parser.add_argument('--fuse_method', type=str, default='hard', help='fusion method [cat, soft, hard, EFA]')
 
 parser.add_argument('--rnn_hidden_size', type=int, default=1024, help='size of the LSTM latent')
 parser.add_argument('--rnn_dropout_out', type=float, default=0.2, help='dropout for the LSTM output layer')
 parser.add_argument('--rnn_dropout_between', type=float, default=0.2, help='dropout within LSTM')
 
-parser.add_argument('--batch_size', type=int, default=32, help='batch size')
+parser.add_argument('--batch_size', type=int, default=4, help='batch size')
 parser.add_argument('--seq_len', type=int, default=11, help='sequence length for LSTM')
 parser.add_argument('--optimizer', type=str, default='Adam', help='type of optimizer [Adam, SGD]')
 parser.add_argument('--weight_decay', type=float, default=1e-5, help='weight decay for the optimizer')
@@ -54,8 +54,8 @@ parser.add_argument('--Lambda', type=float, default=3e-5, help='penalty factor f
 parser.add_argument('--eta', type=float, default=0.05, help='exponential decay factor for temperature')
 parser.add_argument('--temp_init', type=float, default=5, help='initial temperature for gumbel-softmax')
 
-parser.add_argument('--experiment_name', type=str, default='fastflow_jointloss_4', help='experiment name')
-parser.add_argument('--ckpt_model',type=str,default='results/train/fastflow_jointloss_4/checkpoints/019.pth',help='path to load the checkpoint')
+parser.add_argument('--experiment_name', type=str, default='TEST', help='experiment name')
+parser.add_argument('--ckpt_model',type=str,default=None, help='path to load the checkpoint')
 parser.add_argument('--flow_encoder', type=str, default='fastflownet', help='choose to use the flownet or fastflownet')
 parser.add_argument('--flownetBN', default=True, help='choose to use the flownetS or flownetS_BN')
 parser.add_argument('--pretrain_flownet', type=str, default='pretrain_models/fastflownet_ft_kitti.pth', help='path to load pretrained flownet model')
@@ -198,7 +198,7 @@ def train_epoch(model, optimizer, train_loader, image_cache, selection, temp, lo
             # abs_rot_loss = torch.mean(angle_error)
             abs_rot_loss = torch.nn.functional.mse_loss(abs_angle_est[:, :, :3], abs_angle_gt[:, :, :3])
             abs_trans_loss = torch.nn.functional.mse_loss(abs_pose_est[:, :, :3, 3], abs_pose_gt[:, :, :3, 3])
-            abs_pose_loss = abs_trans_loss + args.alpha * abs_rot_loss
+            abs_pose_loss = abs_trans_loss + 5 * args.alpha * abs_rot_loss
 
         else:
             weights = weights / weights.sum()

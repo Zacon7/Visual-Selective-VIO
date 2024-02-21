@@ -71,7 +71,6 @@ class Decoder(nn.Module):
 class FastFlowNet(nn.Module):
     def __init__(self, groups=3):
         super(FastFlowNet, self).__init__()
-
         self.groups = groups
         self.pconv1_1 = convrelu(3, 16, kernel_size=3, stride=2)
         self.pconv1_2 = convrelu(16, 16, kernel_size=3, stride=1)
@@ -93,14 +92,25 @@ class FastFlowNet(nn.Module):
                                    64, 66, 68, 70,
                                    72, 74, 76, 78, 80])
 
+        self.rconv2 = convrelu(32, 32, 3, 1)
+        self.rconv3 = convrelu(64, 32, 3, 1)
+        self.rconv4 = convrelu(64, 32, 3, 1)
         self.rconv5 = convrelu(64, 32, 3, 1)
-        self.rconv6 = convrelu(64, 32, kernel_size=3, stride=1)
-        self.decoder5 = Decoder(87, groups)
-        self.decoder6 = Decoder(87, groups)
+        self.rconv6 = convrelu(64, 32, 3, 1)
+
+        self.up3 = deconv(2, 2)
+        self.up4 = deconv(2, 2)
+        self.up5 = deconv(2, 2)
         self.up6 = deconv(2, 2)
 
+        self.decoder2 = Decoder(87, groups)
+        self.decoder3 = Decoder(87, groups)
+        self.decoder4 = Decoder(87, groups)
+        self.decoder5 = Decoder(87, groups)
+        self.decoder6 = Decoder(87, groups)
+
         for m in self.modules():
-            if isinstance(m, nn.Conv2d):
+            if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
                 nn.init.kaiming_normal_(m.weight)
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
@@ -148,4 +158,25 @@ class FastFlowNet(nn.Module):
         cat5 = torch.cat([cv5, r15, flow6_up], 1)
         flow5 = self.decoder5(cat5) + flow6_up
 
-        return flow5
+        flow5_up = self.up5(flow5)
+        f24_w = self.warp(f24, flow5_up*1.25)
+        cv4 = torch.index_select(self.corr(f14, f24_w), dim=1, index=self.index.to(f14).long())
+        r14 = self.rconv4(f14)
+        cat4 = torch.cat([cv4, r14, flow5_up], 1)
+        flow4 = self.decoder4(cat4) + flow5_up
+
+        flow4_up = self.up4(flow4)
+        f23_w = self.warp(f23, flow4_up*2.5)
+        cv3 = torch.index_select(self.corr(f13, f23_w), dim=1, index=self.index.to(f13).long())
+        r13 = self.rconv3(f13)
+        cat3 = torch.cat([cv3, r13, flow4_up], 1)
+        flow3 = self.decoder3(cat3) + flow4_up
+
+        # flow3_up = self.up3(flow3)
+        # f22_w = self.warp(f22, flow3_up*5.0)
+        # cv2 = torch.index_select(self.corr(f12, f22_w), dim=1, index=self.index.to(f12).long())
+        # r12 = self.rconv2(f12)
+        # cat2 = torch.cat([cv2, r12, flow3_up], 1)
+        # flow2 = self.decoder2(cat2) + flow3_up
+
+        return flow3

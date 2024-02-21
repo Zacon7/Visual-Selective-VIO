@@ -5,41 +5,41 @@ from torch.autograd import Variable
 # -----------------------------Softmax-Random Choice-----------------------------
 
 
-def onehot_from_logits(logits, eps=0.5):
-    """
-    Given batch of logits, return one-hot sample using epsilon greedy strategy
-    (based on given epsilon)
-    """
-    # get best (according to current policy) actions in one-hot form
-    argmax_acs = (logits == logits.max(1, keepdim=True)[0]).float()
+# def onehot_from_logits(logits, eps=0.5):
+#     """
+#     Given batch of logits, return one-hot sample using epsilon greedy strategy
+#     (based on given epsilon)
+#     """
+#     # get best (according to current policy) actions in one-hot form
+#     argmax_acs = (logits == logits.max(1, keepdim=True)[0]).float()
 
-    # 探索率为0，则直接以概率大小选择最优操作
-    if eps == 0.0:
-        return argmax_acs
+#     # 探索率为0，则直接以概率大小选择最优操作
+#     if eps == 0.0:
+#         return argmax_acs
 
-    # get random actions in one-hot form
-    rand_acs = Variable(
-        torch.eye(logits.shape[1])[
-            [np.random.choice(range(logits.shape[1]), size=logits.shape[0])]
-        ],
-        requires_grad=False,
-    )
+#     # get random actions in one-hot form
+#     rand_acs = Variable(
+#         torch.eye(logits.shape[1])[
+#             [np.random.choice(range(logits.shape[1]), size=logits.shape[0])]
+#         ],
+#         requires_grad=False,
+#     )
 
-    # 探索率不为0，则chooses between best and random actions using epsilon greedy
-    return torch.stack(
-        [
-            argmax_acs[i] if r > eps else rand_acs[i]
-            for i, r in enumerate(torch.rand(logits.shape[0]))
-        ]
-    )
+#     # 探索率不为0，则chooses between best and random actions using epsilon greedy
+#     return torch.stack(
+#         [
+#             argmax_acs[i] if r > eps else rand_acs[i]
+#             for i, r in enumerate(torch.rand(logits.shape[0]))
+#         ]
+#     )
 
 
-def get_rep_outputs(logits, hard=False):
-    y = torch.softmax(logits, dim=1)
-    if hard:
-        y_hard = onehot_from_logits(y, eps=0.5)
-        y = (y_hard - y).detach() + y
-    return y
+# def get_rep_outputs(logits, hard=False):
+#     y = torch.softmax(logits, dim=1)
+#     if hard:
+#         y_hard = onehot_from_logits(y, eps=0.5)
+#         y = (y_hard - y).detach() + y
+#     return y
 
 
 # -----------------------------Gumbel-Softmax-----------------------------
@@ -77,5 +77,6 @@ def get_rep_outputs(logits, temperature, hard):
 
 
 if __name__ == "__main__":
-    logits = torch.tensor([0.9, 3, 2.3]).reshape(1, 3)
-    print(get_rep_outputs(logits=logits, hard=True))
+    logits = torch.randn((768, 2))
+    # logits = torch.tensor([0.9, 3, 2.3]).reshape(1, 3)
+    print(get_rep_outputs(logits=logits, temperature=5, hard=True).shape)
