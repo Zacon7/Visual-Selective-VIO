@@ -26,27 +26,27 @@ parser.add_argument('--img_h', type=int, default=256, help='image height')
 parser.add_argument('--img_w', type=int, default=512, help='image width')
 parser.add_argument('--v_f_len', type=int, default=512, help='visual feature length')
 parser.add_argument('--i_f_len', type=int, default=256, help='imu feature length')
-parser.add_argument('--imu_dropout', type=float, default=0, help='dropout for the IMU encoder')
+parser.add_argument('--imu_dropout', type=float, default=0.2, help='dropout for the IMU encoder')
 parser.add_argument('--fuse_method', type=str, default='hard', help='fusion method [cat, soft, hard, EFA]')
 
 parser.add_argument('--rnn_hidden_size', type=int, default=1024, help='size of the LSTM latent')
 parser.add_argument('--rnn_dropout_out', type=float, default=0.2, help='dropout for the LSTM output layer')
 parser.add_argument('--rnn_dropout_between', type=float, default=0.2, help='dropout within LSTM')
 
-parser.add_argument('--batch_size', type=int, default=4, help='batch size')
+parser.add_argument('--batch_size', type=int, default=32, help='batch size')
 parser.add_argument('--seq_len', type=int, default=11, help='sequence length for LSTM')
 parser.add_argument('--optimizer', type=str, default='Adam', help='type of optimizer [Adam, SGD]')
 parser.add_argument('--weight_decay', type=float, default=1e-5, help='weight decay for the optimizer')
 
 parser.add_argument('--epochs_warmup', type=int, default=40, help='number of epochs for warmup')
 parser.add_argument('--epochs_joint', type=int, default=40, help='number of epochs for joint training')
-parser.add_argument('--epochs_fine1', type=int, default=10, help='number of epochs for finetuning')
-parser.add_argument('--epochs_fine2', type=int, default=10, help='number of epochs for finetuning')
+parser.add_argument('--epochs_fine1', type=int, default=10, help='number of epochs for finetuning stage-1')
+parser.add_argument('--epochs_fine2', type=int, default=10, help='number of epochs for finetuning stage-2')
 
 parser.add_argument('--lr_warmup', type=float, default=3e-4, help='learning rate for warming up stage')
-parser.add_argument('--lr_joint', type=float, default=5e-5, help='learning rate for joint training stage')
-parser.add_argument('--lr_fine1', type=float, default=3e-5, help='learning rate for finetuning stage-1')
-parser.add_argument('--lr_fine2', type=float, default=1e-5, help='learning rate for finetuning stage-2')
+parser.add_argument('--lr_joint', type=float, default=3e-5, help='learning rate for joint training stage')
+parser.add_argument('--lr_fine1', type=float, default=5e-6, help='learning rate for finetuning stage-1')
+parser.add_argument('--lr_fine2', type=float, default=2e-6, help='learning rate for finetuning stage-2')
 
 parser.add_argument('--alpha', type=float, default=100, help='weight to balance relative translational & rotational loss.')
 parser.add_argument('--beta', type=float, default=1, help='weight to balance relative & absolute pose loss.')
@@ -54,8 +54,8 @@ parser.add_argument('--Lambda', type=float, default=3e-5, help='penalty factor f
 parser.add_argument('--eta', type=float, default=0.05, help='exponential decay factor for temperature')
 parser.add_argument('--temp_init', type=float, default=5, help='initial temperature for gumbel-softmax')
 
-parser.add_argument('--experiment_name', type=str, default='TEST', help='experiment name')
-parser.add_argument('--ckpt_model',type=str,default=None, help='path to load the checkpoint')
+parser.add_argument('--experiment_name', type=str, default='TEST_FASTFLOW', help='experiment name')
+parser.add_argument('--ckpt_model',type=str,default=None,help='path to load the checkpoint')
 parser.add_argument('--flow_encoder', type=str, default='fastflownet', help='choose to use the flownet or fastflownet')
 parser.add_argument('--flownetBN', default=True, help='choose to use the flownetS or flownetS_BN')
 parser.add_argument('--pretrain_flownet', type=str, default='pretrain_models/fastflownet_ft_kitti.pth', help='path to load pretrained flownet model')
@@ -90,7 +90,7 @@ def update_status(epoch, args, model):
     # Warmup stage
     if epoch < args.epochs_warmup:
         lr = args.lr_warmup
-        beta = 0.01 * args.beta
+        beta = 0.02 * args.beta
         selection = 'random'
         temp = args.temp_init
         for param in model.module.Policy_net.parameters():  # Disable the policy network
@@ -99,7 +99,7 @@ def update_status(epoch, args, model):
     # Joint training stage
     elif epoch < (args.epochs_warmup + args.epochs_joint):
         lr = args.lr_joint
-        beta = 0.1 * args.beta
+        beta = 0.05 * args.beta
         selection = 'gumbel-softmax'
         temp = args.temp_init * math.exp(-args.eta * (epoch - args.epochs_warmup))
         for param in model.module.Policy_net.parameters():  # Enable the policy network
@@ -108,14 +108,14 @@ def update_status(epoch, args, model):
     # Finetuning stage-1
     elif epoch < (args.epochs_warmup + args.epochs_joint + args.epochs_fine1):
         lr = args.lr_fine1
-        beta = 0.05 * args.beta
+        beta = 0.01 * args.beta
         selection = 'gumbel-softmax'
         temp = args.temp_init * math.exp(-args.eta * (epoch - args.epochs_warmup))
 
     # Finetuning stage-2
     elif epoch >= (args.epochs_warmup + args.epochs_joint + args.epochs_fine1):
         lr = args.lr_fine2
-        beta = 0.05 * args.beta
+        beta = 0.01 * args.beta
         selection = 'gumbel-softmax'
         temp = args.temp_init * math.exp(-args.eta * (epoch - args.epochs_warmup))
 
@@ -198,7 +198,7 @@ def train_epoch(model, optimizer, train_loader, image_cache, selection, temp, lo
             # abs_rot_loss = torch.mean(angle_error)
             abs_rot_loss = torch.nn.functional.mse_loss(abs_angle_est[:, :, :3], abs_angle_gt[:, :, :3])
             abs_trans_loss = torch.nn.functional.mse_loss(abs_pose_est[:, :, :3, 3], abs_pose_gt[:, :, :3, 3])
-            abs_pose_loss = abs_trans_loss + 5 * args.alpha * abs_rot_loss
+            abs_pose_loss = abs_trans_loss + args.alpha * abs_rot_loss
 
         else:
             weights = weights / weights.sum()
@@ -253,7 +253,7 @@ def main():
     logger = logging.getLogger(args.experiment_name)
     logger.setLevel(logging.INFO)
     formatter = logging.Formatter('%(asctime)s - %(message)s')
-    file_handler = logging.FileHandler(str(log_dir) + '/%s.txt' % args.experiment_name)
+    file_handler = logging.FileHandler(str(log_dir) + '/%s.log' % args.experiment_name)
     file_handler.setLevel(logging.INFO)
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)

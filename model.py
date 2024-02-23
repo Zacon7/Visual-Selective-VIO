@@ -7,6 +7,7 @@ import torch.nn.functional as F
 from FastFlowNet import FastFlowNet
 from EFA import EarlyFusionAttention
 
+
 def conv(in_planes, out_planes, kernel_size=3, stride=1, dropout=0, batchNorm=True):
     if batchNorm:
         return nn.Sequential(
@@ -32,17 +33,31 @@ class InertialEncoder(nn.Module):
         super(InertialEncoder, self).__init__()
 
         # apply Conv1d with same padding
-        self.encoder_conv = nn.Sequential(
-            nn.Conv1d(6, 64, kernel_size=3, padding=1),
+        self.acc_encoder = nn.Sequential(
+            nn.Conv1d(3, 32, kernel_size=3, padding=1),
+            nn.BatchNorm1d(32),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.Dropout(opt.imu_dropout),
+            nn.Conv1d(32, 64, kernel_size=3, padding=1),
             nn.BatchNorm1d(64),
             nn.LeakyReLU(0.1, inplace=True),
             nn.Dropout(opt.imu_dropout),
             nn.Conv1d(64, 128, kernel_size=3, padding=1),
             nn.BatchNorm1d(128),
             nn.LeakyReLU(0.1, inplace=True),
+            nn.Dropout(opt.imu_dropout)
+        )
+        self.rot_encoder = nn.Sequential(
+            nn.Conv1d(3, 32, kernel_size=3, padding=1),
+            nn.BatchNorm1d(32),
+            nn.LeakyReLU(0.1, inplace=True),
             nn.Dropout(opt.imu_dropout),
-            nn.Conv1d(128, 256, kernel_size=3, padding=1),
-            nn.BatchNorm1d(256),
+            nn.Conv1d(32, 64, kernel_size=3, padding=1),
+            nn.BatchNorm1d(64),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.Dropout(opt.imu_dropout),
+            nn.Conv1d(64, 128, kernel_size=3, padding=1),
+            nn.BatchNorm1d(128),
             nn.LeakyReLU(0.1, inplace=True),
             nn.Dropout(opt.imu_dropout)
         )
@@ -57,7 +72,10 @@ class InertialEncoder(nn.Module):
         '''
         batch_size, seq_len = fi.shape[0], fi.shape[1]
         fi = fi.view(batch_size * seq_len, fi.size(2), fi.size(3)).permute(0, 2, 1)  # fi:  (batch *seq_len=10, 6, 11)
-        fi = self.encoder_conv(fi)                                  # fi:  (batch *seq_len=10, 256, 11)
+        # fi = self.encoder_conv(fi)                                  # fi:  (batch *seq_len=10, 256, 11)
+        fi_acc, fi_rot = fi[:, :3, :], fi[:, 3:, :]
+        fi_acc, fi_rot = self.acc_encoder(fi_acc), self.rot_encoder(fi_rot)
+        fi = torch.cat([fi_acc, fi_rot], dim=1)
         out = self.proj(fi.view(fi.shape[0], -1))                   # out: (batch *seq_len=10, i_f_len=256)
         return out.view(batch_size, seq_len, 256)                   # out: (batch, seq_len=10, i_f_len=256)
 
