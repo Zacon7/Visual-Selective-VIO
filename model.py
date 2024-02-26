@@ -31,6 +31,7 @@ class InertialEncoder(nn.Module):
 
     def __init__(self, opt):
         super(InertialEncoder, self).__init__()
+        self.opt = opt
         if opt.imu_encoder == 'original':
             # apply Conv1d with same padding
             self.encoder_conv = nn.Sequential(

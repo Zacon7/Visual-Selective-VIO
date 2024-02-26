@@ -215,7 +215,7 @@ def train_epoch(model, optimizer, train_loader, image_cache, selection, temp, lo
         # Compute overall pose loss
         pose_loss = rel_pose_loss + beta * abs_pose_loss
         # Compute vision penalty loss
-        penalty_loss = (decisions[:, :, 0].float()).sum(-1).mean()  # 平均每个bach每段时序上使用了视觉特征的次数
+        penalty_loss = (decisions[:, :, 0].float()).sum(-1).mean()  # 平均每个bach在长为seq_len的运动序列中启用视觉模态的次数（不含第一次）
         # Compute total loss
         total_loss = pose_loss + args.Lambda * penalty_loss
 
@@ -342,8 +342,8 @@ def main():
     model = torch.nn.DataParallel(model, device_ids=gpu_ids)
 
     # Initialize or restore the training epoch
-    init_epoch = int(args.ckpt_model[-7:-4]) + 1 if args.ckpt_model is not None else 0
-    # init_epoch = 80
+    # init_epoch = int(args.ckpt_model[-7:-4]) + 1 if args.ckpt_model is not None else 0
+    init_epoch = 99
 
     # Initialize the optimizer
     if args.optimizer == 'SGD':

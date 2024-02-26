@@ -151,19 +151,19 @@ class FastFlowNet(nn.Module):
         cat6 = torch.cat([cv6, r16, flow7_up], 1)    # (batch, 87, 4, 8)
         flow6 = self.decoder6(cat6)                  # (batch, 96, 4, 8)
 
-        flow6_up = self.up6(flow6)
-        f25_w = self.warp(f25, flow6_up*0.625)
-        cv5 = torch.index_select(self.corr(f15, f25_w), dim=1, index=self.index.to(f15).long())
-        r15 = self.rconv5(f15)
-        cat5 = torch.cat([cv5, r15, flow6_up], 1)
-        flow5 = self.decoder5(cat5) + flow6_up
+        # flow6_up = self.up6(flow6)
+        # f25_w = self.warp(f25, flow6_up*0.625)
+        # cv5 = torch.index_select(self.corr(f15, f25_w), dim=1, index=self.index.to(f15).long())
+        # r15 = self.rconv5(f15)
+        # cat5 = torch.cat([cv5, r15, flow6_up], 1)
+        # flow5 = self.decoder5(cat5) + flow6_up
 
-        flow5_up = self.up5(flow5)
-        f24_w = self.warp(f24, flow5_up*1.25)
-        cv4 = torch.index_select(self.corr(f14, f24_w), dim=1, index=self.index.to(f14).long())
-        r14 = self.rconv4(f14)
-        cat4 = torch.cat([cv4, r14, flow5_up], 1)
-        flow4 = self.decoder4(cat4) + flow5_up
+        # flow5_up = self.up5(flow5)
+        # f24_w = self.warp(f24, flow5_up*1.25)
+        # cv4 = torch.index_select(self.corr(f14, f24_w), dim=1, index=self.index.to(f14).long())
+        # r14 = self.rconv4(f14)
+        # cat4 = torch.cat([cv4, r14, flow5_up], 1)
+        # flow4 = self.decoder4(cat4) + flow5_up
 
         # flow4_up = self.up4(flow4)
         # f23_w = self.warp(f23, flow4_up*2.5)
@@ -179,4 +179,4 @@ class FastFlowNet(nn.Module):
         # cat2 = torch.cat([cv2, r12, flow3_up], 1)
         # flow2 = self.decoder2(cat2) + flow3_up
 
-        return flow4
+        return flow6
