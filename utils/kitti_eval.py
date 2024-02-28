@@ -130,15 +130,15 @@ def kitti_eval(rel_pose_est, rel_pose_gt, abs_pose_mat_gt, dec_est):
     return:
         abs_pose_mat_est: len(2761) with estimated Absolute pose in 4x4 matrix SE(3), starting from the first frame
         abs_pose_mat_gt:  len(2761) with ground-truth Absolute pose in 4x4 matrix SE(3), starting from the first frame
-        t_rmse, r_rmse: A real number, the RMSE of translation and rotation (euler angles) error of Relative Pose throughout the trajectory, aka ATE
-        t_rel, r_rel: A percentage score, average pose error (per hundred meters) for all valid segments throughout the trajectory, aka RPE
+        t_rmse, r_rmse: A real number, the RMSE of translation and rotation (euler angles) error of Relative Pose throughout the trajectory, aka RPE
+        t_rel, r_rel: A percentage score, average pose error (per hundred meters) for all valid segments throughout the trajectory, aka KITTI_RPE
         usage: Average percentage of visual features enabled across the entire trajectory
         speed: len(2761), the speed of each frame of picture
     '''
     # First decision is always true
     dec_est = np.insert(dec_est, 0, 1)  # dec_est: (27560,)
 
-    # Calculate Absolute Trajectory Error, ATE
+    # Calculate Relative Pose Error, RPE
     # Calculate the translational and rotational RMSE of Relative pose throughout the trajectory
     t_rmse, r_rmse = rmse_err_cal(rel_pose_est, rel_pose_gt)
 
@@ -174,7 +174,7 @@ def kitti_metric(abs_pose_est, abs_pose_gt):
     err = []
     # Calculate the accumulate distance and current speed for each frame
     dist, speed = trajectoryDistances(abs_pose_gt)   # dist, speed: len(2761)
-    step_size = 1  # 10Hz
+    step_size = 10  # 10Hz
 
     for i in range(0, len(abs_pose_gt), step_size):    # Iterate through all frames with step size
 
@@ -205,7 +205,7 @@ def kitti_metric(abs_pose_est, abs_pose_gt):
     return err, t_rel, r_rel, np.asarray(speed)
 
 
-def plotPath_2D(seq, poses_gt_mat, poses_est_mat, plot_path_dir, decision, speed, window_size):
+def plotPath_2D(seq, abs_pose_gt, abs_pose_est, plot_path_dir, decision, speed, window_size):
 
     # Apply smoothing to the decision
     decision = np.insert(decision, 0, 1)
@@ -213,26 +213,23 @@ def plotPath_2D(seq, poses_gt_mat, poses_est_mat, plot_path_dir, decision, speed
 
     fontsize_ = 10
     plot_keys = ["Ground Truth", "Ours"]
-    start_point = [0, 0]
-    style_pred = 'b-'
-    style_gt = 'r-'
-    style_O = 'ko'
+    styles = ['r-', 'b-']
 
     # get the value
-    x_gt = np.asarray([pose[0, 3] for pose in poses_gt_mat])
-    y_gt = np.asarray([pose[1, 3] for pose in poses_gt_mat])
-    z_gt = np.asarray([pose[2, 3] for pose in poses_gt_mat])
+    x_gt = np.asarray([pose[0, 3] for pose in abs_pose_gt])
+    y_gt = np.asarray([pose[1, 3] for pose in abs_pose_gt])
+    z_gt = np.asarray([pose[2, 3] for pose in abs_pose_gt])
 
-    x_pred = np.asarray([pose[0, 3] for pose in poses_est_mat])
-    y_pred = np.asarray([pose[1, 3] for pose in poses_est_mat])
-    z_pred = np.asarray([pose[2, 3] for pose in poses_est_mat])
+    x_pred = np.asarray([pose[0, 3] for pose in abs_pose_est])
+    y_pred = np.asarray([pose[1, 3] for pose in abs_pose_est])
+    z_pred = np.asarray([pose[2, 3] for pose in abs_pose_est])
 
     # Plot 2d trajectory estimation map
     fig = plt.figure(figsize=(6, 6), dpi=100)
     ax = plt.gca()
-    plt.plot(x_gt, z_gt, style_gt, label=plot_keys[0])
-    plt.plot(x_pred, z_pred, style_pred, label=plot_keys[1])
-    plt.plot(start_point[0], start_point[1], style_O, label='Start Point')
+    plt.plot(x_gt, z_gt, styles[0], label=plot_keys[0])
+    plt.plot(x_pred, z_pred, styles[1], label=plot_keys[1])
+    plt.plot(0, 0, 'ko', label='Start Point')
     plt.legend(loc="upper right", prop={'size': fontsize_})
     plt.xlabel('x (m)', fontsize=fontsize_)
     plt.ylabel('z (m)', fontsize=fontsize_)
@@ -258,9 +255,9 @@ def plotPath_2D(seq, poses_gt_mat, poses_est_mat, plot_path_dir, decision, speed
     fig = plt.figure(figsize=(8, 6), dpi=100)
     ax = plt.gca()
     cout = np.insert(decision, 0, 0) * 100
-    cax = plt.scatter(x_pred, z_pred, marker='o', c=cout)
-    plt.xlabel('x (m)', fontsize=fontsize_)
-    plt.ylabel('z (m)', fontsize=fontsize_)
+    cax = plt.scatter(x_pred, z_pred, marker='o', c=cout, cmap='inferno')
+    plt.xlabel('X (m)', fontsize=fontsize_)
+    plt.ylabel('Z (m)', fontsize=fontsize_)
     xlim = ax.get_xlim()
     ylim = ax.get_ylim()
     xmean = np.mean(xlim)
@@ -273,7 +270,7 @@ def plotPath_2D(seq, poses_gt_mat, poses_est_mat, plot_path_dir, decision, speed
     cbar = fig.colorbar(cax, ticks=ticks)
     cbar.ax.set_yticklabels([str(i) + '%' for i in ticks])
 
-    plt.title('decision heatmap with window size {}'.format(window_size))
+    plt.title('Visual Modality Usage Heat Map'.format(window_size))
     png_title = "{}_decision_smoothed".format(seq)
     plt.savefig(plot_path_dir + "/" + png_title + ".png", bbox_inches='tight', pad_inches=0.1)
     plt.close()
@@ -282,9 +279,9 @@ def plotPath_2D(seq, poses_gt_mat, poses_est_mat, plot_path_dir, decision, speed
     fig = plt.figure(figsize=(8, 6), dpi=100)
     ax = plt.gca()
     cout = speed
-    cax = plt.scatter(x_pred, z_pred, marker='o', c=cout)
-    plt.xlabel('x (m)', fontsize=fontsize_)
-    plt.ylabel('z (m)', fontsize=fontsize_)
+    cax = plt.scatter(x_pred, z_pred, marker='o', c=cout, cmap='inferno')
+    plt.xlabel('X (m)', fontsize=fontsize_)
+    plt.ylabel('Z (m)', fontsize=fontsize_)
     xlim = ax.get_xlim()
     ylim = ax.get_ylim()
     xmean = np.mean(xlim)
@@ -297,7 +294,7 @@ def plotPath_2D(seq, poses_gt_mat, poses_est_mat, plot_path_dir, decision, speed
     cbar = fig.colorbar(cax, ticks=ticks)
     cbar.ax.set_yticklabels([str(i) + 'm/s' for i in ticks])
 
-    plt.title('speed heatmap')
+    plt.title('Speed Heat Map')
     png_title = "{}_speed".format(seq)
     plt.savefig(plot_path_dir + "/" + png_title + ".png", bbox_inches='tight', pad_inches=0.1)
     plt.close()

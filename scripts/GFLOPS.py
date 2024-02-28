@@ -1,7 +1,7 @@
 import sys
 sys.path.append('/home/zacon/code_projects/Visual-Selective-VIO')
 
-from baseline import DeepVIO
+from model import DeepVIO
 import torch
 from thop import profile
 import argparse
@@ -21,8 +21,8 @@ parser.add_argument('--img_w', type=int, default=512, help='image width')
 parser.add_argument('--v_f_len', type=int, default=512, help='visual feature length')
 parser.add_argument('--i_f_len', type=int, default=256, help='imu feature length')
 parser.add_argument('--imu_dropout', type=float, default=0.2, help='dropout for the IMU encoder')
-parser.add_argument('--imu_encoder', type=str, default='original', help='encoder type [original, separable]')
-parser.add_argument('--fuse_method', type=str, default='cat', help='fusion method [cat, soft, hard]')
+parser.add_argument('--imu_encoder', type=str, default='separable', help='encoder type [original, separable]')
+parser.add_argument('--fuse_method', type=str, default='EFA', help='fusion method [cat, soft, hard, EFA]')
 
 parser.add_argument('--rnn_hidden_size', type=int, default=1024, help='size of the LSTM latent')
 parser.add_argument('--rnn_dropout_out', type=float, default=0.2, help='dropout for the LSTM output layer')
@@ -35,7 +35,7 @@ parser.add_argument('--flownetBN', default=True, help='choose to use the flownet
 args = parser.parse_args()
 
 model = DeepVIO(args)
-model.load_state_dict(torch.load(args.ckpt_model))
+model.load_state_dict(torch.load(args.ckpt_model), strict=False)
 print('load model from %s' % args.ckpt_model)
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 model.to(device)

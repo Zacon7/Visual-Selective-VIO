@@ -3,7 +3,7 @@ from pathlib import Path
 import re
 
 # 从日志文件中读取内容
-log_file_path = 'results/train/fastflow_hard_flow6/logs/fastflow_hard_flow6.txt'
+log_file_path = 'results/train/flow_jointloss/flownet_jointloss_1/logs/flownet_jointloss_1.log'
 with open(log_file_path, 'r') as file:
     log_content = file.read()
 
@@ -33,7 +33,7 @@ plt.plot(epoch_indices, average_loss_by_epoch, marker='.', markersize=10, linest
          label='Epoch Average Loss')
 
 # 在指定 epoch 处添加文本标注
-for epoch in [0, 40, 80, 99]:  # 使用99代替100，确保不越界
+for epoch in [0, 40, 80, 90, 99]:  # 使用99代替100，确保不越界
     if 0 <= epoch < num_epochs:  # 添加检查以确保索引在有效范围内
         plt.text(epoch * num_batches + num_batches // 2, average_loss_by_epoch[epoch], f'Epoch {epoch}', fontsize=10,
                  color='blue', ha='center', va='bottom', bbox=dict(facecolor='white', alpha=0.7))
@@ -43,5 +43,6 @@ plt.ylabel('Batch Loss', fontsize=14)
 plt.title('Training Loss Over Batches and Epochs', fontsize=16)
 plt.legend()
 plt.grid(True, linestyle='--', alpha=0.7)
+plt.subplots_adjust(left=0.07, bottom=0.07, right=0.95, top=0.95)
 plt.gcf().canvas.manager.set_window_title(Path(log_file_path).name)
 plt.show()

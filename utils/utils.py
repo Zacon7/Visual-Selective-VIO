@@ -276,9 +276,9 @@ def read_pose_from_text(path):
         poses_abs.append(prev_pose)
         for i in range(1, len(lines)):
             curr_pose = read_pose(lines[i])
+            poses_abs.append(curr_pose)
             poses_rel.append(get_relative_pose_6DoF(prev_pose, curr_pose))
             prev_pose = curr_pose.copy()
-            poses_abs.append(curr_pose)
         poses_abs = np.array(poses_abs)
         poses_rel = np.array(poses_rel)
     return poses_abs, poses_rel

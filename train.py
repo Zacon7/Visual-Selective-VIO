@@ -49,10 +49,10 @@ parser.add_argument('--lr_joint', type=float, default=3e-5, help='learning rate 
 parser.add_argument('--lr_fine1', type=float, default=5e-6, help='learning rate for finetuning stage-1')
 parser.add_argument('--lr_fine2', type=float, default=2e-6, help='learning rate for finetuning stage-2')
 
-parser.add_argument('--beta_warmup', type=float, default=0.1, help='weight to balance relative & absolute pose loss.')
-parser.add_argument('--beta_joint', type=float, default=0.5, help='weight to balance relative & absolute pose loss.')
-parser.add_argument('--beta_fine1', type=float, default=0.2, help='weight to balance relative & absolute pose loss.')
-parser.add_argument('--beta_fine2', type=float, default=0.2, help='weight to balance relative & absolute pose loss.')
+parser.add_argument('--beta_warmup', type=float, default=0.2, help='weight to balance relative & absolute pose loss.')
+parser.add_argument('--beta_joint', type=float, default=1.0, help='weight to balance relative & absolute pose loss.')
+parser.add_argument('--beta_fine1', type=float, default=0.5, help='weight to balance relative & absolute pose loss.')
+parser.add_argument('--beta_fine2', type=float, default=0.5, help='weight to balance relative & absolute pose loss.')
 
 parser.add_argument('--alpha', type=float, default=100, help='weight to balance relative translational & rotational loss.')
 parser.add_argument('--Lambda', type=float, default=3e-5, help='penalty factor for the visual encoder usage')
@@ -61,7 +61,7 @@ parser.add_argument('--temp_init', type=float, default=5, help='initial temperat
 
 parser.add_argument('--experiment_name', type=str, default='TEST_FASTFLOW', help='experiment name')
 parser.add_argument('--ckpt_model',type=str,default=None,help='path to load the checkpoint')
-parser.add_argument('--flow_encoder', type=str, default='flownet', help='choose to use the flownet or fastflownet')
+parser.add_argument('--flow_encoder', type=str, default='fastflownet', help='choose to use the flownet or fastflownet')
 parser.add_argument('--flownetBN', default=True, help='choose to use the flownetS or flownetS_BN')
 parser.add_argument('--pretrain_flownet', type=str, default='pretrain_models/fastflownet_ft_kitti.pth', help='path to load pretrained flownet model')
 
@@ -342,8 +342,8 @@ def main():
     model = torch.nn.DataParallel(model, device_ids=gpu_ids)
 
     # Initialize or restore the training epoch
-    # init_epoch = int(args.ckpt_model[-7:-4]) + 1 if args.ckpt_model is not None else 0
-    init_epoch = 99
+    init_epoch = int(args.ckpt_model[-7:-4]) + 1 if args.ckpt_model is not None else 0
+    # init_epoch = 99
 
     # Initialize the optimizer
     if args.optimizer == 'SGD':
