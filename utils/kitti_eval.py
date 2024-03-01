@@ -231,8 +231,8 @@ def plotPath_2D(seq, abs_pose_gt, abs_pose_est, plot_path_dir, decision, speed, 
     plt.plot(x_pred, z_pred, styles[1], label=plot_keys[1])
     plt.plot(0, 0, 'ko', label='Start Point')
     plt.legend(loc="upper right", prop={'size': fontsize_})
-    plt.xlabel('x (m)', fontsize=fontsize_)
-    plt.ylabel('z (m)', fontsize=fontsize_)
+    plt.xlabel('X (m)', fontsize=fontsize_)
+    plt.ylabel('Z (m)', fontsize=fontsize_)
 
     # set the range of x and y
     xlim = ax.get_xlim()
@@ -270,7 +270,7 @@ def plotPath_2D(seq, abs_pose_gt, abs_pose_est, plot_path_dir, decision, speed, 
     cbar = fig.colorbar(cax, ticks=ticks)
     cbar.ax.set_yticklabels([str(i) + '%' for i in ticks])
 
-    plt.title('Visual Modality Usage Heat Map'.format(window_size))
+    plt.title('Visual Modality Usage Heat Map')
     png_title = "{}_decision_smoothed".format(seq)
     plt.savefig(plot_path_dir + "/" + png_title + ".png", bbox_inches='tight', pad_inches=0.1)
     plt.close()
