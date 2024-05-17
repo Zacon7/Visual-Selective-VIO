@@ -3,12 +3,12 @@ from pathlib import Path
 import re
 
 # 从日志文件中读取内容
-log_file_path = 'AdaVIO.log'
+log_file_path = 'results/train/fastflow/fastflow_hard_flow6/logs/fastflow_hard_flow6.log'
 with open(log_file_path, 'r') as file:
     log_content = file.read()
 
 # 使用正则表达式匹配 total loss 的数值
-total_loss_pattern = re.compile(r'abs_pose_loss: ([0-9.]+)')
+total_loss_pattern = re.compile(r'pose_loss: ([0-9.]+)')
 matches = total_loss_pattern.findall(log_content)
 
 # 将匹配到的数值转换为浮点数列表

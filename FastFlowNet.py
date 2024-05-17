@@ -44,6 +44,9 @@ class Decoder(nn.Module):
         self.conv2 = convrelu(96, 96, kernel_size=3, stride=1, groups=groups)
         self.conv3 = convrelu(96, 96, kernel_size=3, stride=1, groups=groups)
         self.conv4 = convrelu(96, 96, kernel_size=3, stride=1, groups=groups)
+        # self.conv5 = convrelu(96, 64, kernel_size=3, stride=1)
+        # self.conv6 = convrelu(64, 32, kernel_size=3, stride=1)
+        # self.conv7 = nn.Conv2d(32, 2, 3, 1, 1)
         self.conv5 = convrelu(96, 64, kernel_size=3, stride=1)
         self.conv6 = convrelu(64, 32, kernel_size=3, stride=1)
         self.conv7 = nn.Conv2d(32, 2, 3, 1, 1)
@@ -64,6 +67,7 @@ class Decoder(nn.Module):
             out = self.channel_shuffle(self.conv2(out), self.groups)
             out = self.channel_shuffle(self.conv3(out), self.groups)
             out = self.channel_shuffle(self.conv4(out), self.groups)    # (batch, 96, 4, 8)
+            # out = self.conv7(self.conv6(self.conv5(out)))
             out = self.conv7(self.conv6(self.conv5(out)))
         return out
 
@@ -145,25 +149,25 @@ class FastFlowNet(nn.Module):
         f16 = F.avg_pool2d(f15, kernel_size=(2, 2), stride=(2, 2))
         f26 = F.avg_pool2d(f25, kernel_size=(2, 2), stride=(2, 2))      # (batch, 64, 4, 8)
 
-        flow7_up = torch.zeros(f16.size(0), 2, f16.size(2), f16.size(3)).to(f15)
-        cv6 = torch.index_select(self.corr(f16, f26), dim=1, index=self.index.to(f16).long())
-        r16 = self.rconv6(f16)
-        cat6 = torch.cat([cv6, r16, flow7_up], 1)    # (batch, 87, 4, 8)
-        flow6 = self.decoder6(cat6)                  # (batch, 96, 4, 8)
+        # flow7_up = torch.zeros(f16.size(0), 2, f16.size(2), f16.size(3)).to(f15)
+        # cv6 = torch.index_select(self.corr(f16, f26), dim=1, index=self.index.to(f16).long())
+        # r16 = self.rconv6(f16)
+        # cat6 = torch.cat([cv6, r16, flow7_up], 1)    # (batch, 87, 4, 8)
+        # flow6 = self.decoder6(cat6)                  # (batch, 96, 4, 8)
 
-        flow6_up = self.up6(flow6)
-        f25_w = self.warp(f25, flow6_up*0.625)
-        cv5 = torch.index_select(self.corr(f15, f25_w), dim=1, index=self.index.to(f15).long())
-        r15 = self.rconv5(f15)
-        cat5 = torch.cat([cv5, r15, flow6_up], 1)
-        flow5 = self.decoder5(cat5) + flow6_up
+        # flow6_up = self.up6(flow6)
+        # f25_w = self.warp(f25, flow6_up*0.625)
+        # cv5 = torch.index_select(self.corr(f15, f25_w), dim=1, index=self.index.to(f15).long())
+        # r15 = self.rconv5(f15)
+        # cat5 = torch.cat([cv5, r15, flow6_up], 1)
+        # flow5 = self.decoder5(cat5) + flow6_up
 
-        flow5_up = self.up5(flow5)
-        f24_w = self.warp(f24, flow5_up*1.25)
-        cv4 = torch.index_select(self.corr(f14, f24_w), dim=1, index=self.index.to(f14).long())
-        r14 = self.rconv4(f14)
-        cat4 = torch.cat([cv4, r14, flow5_up], 1)
-        flow4 = self.decoder4(cat4) + flow5_up
+        # flow5_up = self.up5(flow5)
+        # f24_w = self.warp(f24, flow5_up*1.25)
+        # cv4 = torch.index_select(self.corr(f14, f24_w), dim=1, index=self.index.to(f14).long())
+        # r14 = self.rconv4(f14)
+        # cat4 = torch.cat([cv4, r14, flow5_up], 1)
+        # flow4 = self.decoder4(cat4) + flow5_up
 
         # flow4_up = self.up4(flow4)
         # f23_w = self.warp(f23, flow4_up*2.5)
@@ -179,5 +183,5 @@ class FastFlowNet(nn.Module):
         # cat2 = torch.cat([cv2, r12, flow3_up], 1)
         # flow2 = self.decoder2(cat2) + flow3_up
 
-        # return torch.cat([f16, f26], dim=1)
-        return flow4
+        return torch.cat([f16, f26], dim=1)
+        # return flow5

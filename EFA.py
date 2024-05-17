@@ -49,7 +49,7 @@ class EarlyFusionAttention(nn.Module):
                 nn.MultiheadAttention(
                     embed_dim=embed_dims,
                     num_heads=num_heads,
-                    batch_first=True,
+                    # batch_first=True,
                 )
             )
 
